@@ -13,6 +13,8 @@ public static class Program
     {
         var options = AppOptions.Parse(args);
         DiagLog.Init(options.Diagnostics);
+        DiagLog.Detail($"launch: {string.Join(' ', args)}");
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => DiagLog.Write($"fatal (domain): {e.ExceptionObject}");
         if (!options.Screenshot)
         {
             s_instance = new Mutex(true, @"Local\WorldTimeFlyout.SingleInstance", out bool created);
@@ -24,13 +26,21 @@ public static class Program
             }
         }
 
-        WinRT.ComWrappersSupport.InitializeComWrappers();
-        Application.Start(p =>
+        try
         {
-            var context = new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread());
-            SynchronizationContext.SetSynchronizationContext(context);
-            _ = new App(options);
-        });
+            WinRT.ComWrappersSupport.InitializeComWrappers();
+            Application.Start(p =>
+            {
+                var context = new DispatcherQueueSynchronizationContext(DispatcherQueue.GetForCurrentThread());
+                SynchronizationContext.SetSynchronizationContext(context);
+                _ = new App(options);
+            });
+        }
+        catch (Exception e)
+        {
+            DiagLog.Write($"fatal: {e}");
+            return 1;
+        }
         GC.KeepAlive(s_instance);
         return 0;
     }

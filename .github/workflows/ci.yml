@@ -19,9 +19,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -56,9 +56,17 @@ jobs:
         shell: pwsh
         run: |
           $shots = "$pwd/screenshots"
+          Get-ChildItem publish/WorldTimeFlyout | Sort-Object Length -Descending | Select-Object -First 25 Name, Length | Format-Table -AutoSize
           $p = Start-Process publish/WorldTimeFlyout/WorldTimeFlyout.exe `
-            -ArgumentList '--screenshot', $shots, '--fixed-time', '2026-11-09T14:00:00Z' -PassThru
+            -ArgumentList '--screenshot', $shots, '--fixed-time', '2026-11-09T14:00:00Z', '--diag' -PassThru
           if (-not $p.WaitForExit(180000)) { Stop-Process $p -Force; throw 'screenshot run timed out' }
+          'exit code: 0x{0:X8}' -f $p.ExitCode
+          $log = "$env:LOCALAPPDATA/WorldTimeFlyout/log.txt"
+          if (Test-Path $log) { '--- app log ---'; Get-Content $log }
+          '--- recent application errors ---'
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 1, 2; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue |
+            Select-Object -First 5 | ForEach-Object { $_.ProviderName; $_.Message; '' }
+          if (-not (Test-Path "$shots/screenshots.txt")) { throw 'screenshot run did not finish' }
           Get-Content "$shots/screenshots.txt"
           Get-ChildItem $shots
           if (Select-String -Path "$shots/screenshots.txt" -Pattern 'FAILED') { throw 'screenshot run failed' }
@@ -80,7 +88,7 @@ jobs:
           "name=$name" >> $env:GITHUB_OUTPUT
           "zip: $('{0:N1}' -f ((Get-Item "$name.zip").Length / 1MB)) MB  sha256: $hash" >> $env:GITHUB_STEP_SUMMARY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.pkg.outputs.name }}
           path: |
@@ -88,7 +96,7 @@ jobs:
             ${{ steps.pkg.outputs.name }}.zip.sha256
             metrics.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: screenshots

@@ -30,6 +30,20 @@ public sealed partial class App : Application, IXamlMetadataProvider
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        try
+        {
+            Launch();
+        }
+        catch (Exception e)
+        {
+            DiagLog.Write($"launch failed: {e}");
+            Exit();
+        }
+    }
+
+    private void Launch()
+    {
+        DiagLog.Detail("OnLaunched");
         Resources.MergedDictionaries.Add(new XamlControlsResources());
         if (_options.Screenshot)
             _options = _options with { SettingsPath = ScreenshotRunner.PrepareSettings(_options.ScreenshotDir!) };
