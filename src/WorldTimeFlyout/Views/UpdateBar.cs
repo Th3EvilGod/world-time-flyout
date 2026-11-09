@@ -42,7 +42,7 @@ public sealed class UpdateBar
             try { Process.Start(new ProcessStartInfo(UpdateFeed.ReleasePage(_updater!.Current)) { UseShellExecute = true }); }
             catch (Exception e) { DiagLog.Write($"open release page: {e.Message}"); }
         };
-        _progress = new ProgressBar { Minimum = 0, Maximum = 1, Margin = new Thickness(0, 0, 0, 10) };
+        _progress = new ProgressBar { Minimum = 0, Maximum = 1, Margin = new Thickness(0, 0, 16, 12) };
         Bar.CloseButtonClick += (_, _) => OnClosedByUser();
     }
 
