@@ -1,79 +1,118 @@
 # World Time Flyout
 
-A world clock and time-zone planner that opens next to the Windows 11 taskbar calendar.
-Click the clock in the taskbar and your cities appear beside the calendar, in the same
-Fluent style, theme and accent color.
+Your cities, next to the Windows 11 taskbar calendar. Click the clock on the taskbar and
+the panel slides in beside the calendar, in the same Fluent style, theme and accent
+color. It follows the calendar when you expand or collapse it and slides out with it.
 
-**Status: preview.** Built and unit-tested on GitHub's Windows runner. The calendar
-integration still needs confirming on real Windows 11 desktops (see "Known limits").
+![Full view beside the expanded calendar](docs/images/expanded.png)
+
+![Compact view beside the collapsed calendar](docs/images/compact.png)
+
+**Download:** the latest `WorldTimeFlyout-<version>-win-x64.zip` from
+[Releases](../../releases/latest). Windows 11 x64, nothing else to install.
 
 ## What it does
 
-- Opens automatically beside the native calendar when you click the taskbar clock
-  (or press Win+N). Closes with it.
-- Follows the calendar: full view when the calendar is expanded, three city tiles when it
-  is collapsed (‹ › cycle through the rest). Slides in, resizes and slides out together
-  with the calendar, on the Windows 11 motion curves.
-- One shared time cursor for every city. Drag the timeline, click an hour, or use the
-  mouse wheel. The arrows beside the date move a whole day; click the date to pick one
-  from a month view. In the compact view −/+ move by the time step (30 minutes by
-  default) from a clean time: at 10:27 the steps are 10:00 and 11:00, shown as −30m and
-  +30m. "Now" (or the × on the shift) jumps back.
-- Click any time to copy it ("New York: 9:00 AM"). Right-click for copy with date,
-  copy all, reorder, set the reference city, remove.
-- Offline search across about 34,000 cities, plus countries, IANA zones
-  (America/New_York), abbreviations (EST, IST) and offsets (UTC+5:30). Typos are tolerated.
-- Correct daylight saving, 30 and 45 minute offsets and date changes, using the IANA
-  time-zone database bundled with the app.
-- Follows the Windows light/dark mode, accent color, contrast themes, text size and
-  animation settings, live.
-- No network access, no telemetry, no admin rights, nothing injected into Explorer.
+- Opens automatically beside the calendar when you click the taskbar clock or press
+  Win+N, and closes with it.
+- **Full view** next to the expanded calendar: every city with its time, day and
+  difference from your main city, plus a timeline.
+- **Compact view** next to the collapsed calendar: three city tiles, with ‹ › to cycle
+  through the rest.
+- **One time for every city.** Move it and every city follows, so you can see what
+  "Thursday 9 AM in New York" is everywhere else.
+- **Copy** a time with one click ("New York: 9:00 AM").
+- **Offline search** across about 34,000 cities, plus countries, time zone names
+  (America/New_York), abbreviations (EST, IST) and offsets (UTC+5:30). Typos are fine.
+- **Correct time math**: daylight saving, 30 and 45 minute offsets and date changes,
+  using the IANA time zone database bundled with the app.
+- **Feels like Windows 11**: follows light/dark mode, accent color, contrast themes,
+  text size and the animation setting, live. Motion uses Microsoft's Windows 11 values
+  (333 ms slide in, 250 ms resize, 167 ms slide out).
+- **Light and private**: no network access, no telemetry, no admin rights, nothing
+  injected into Explorer. About 1 MB of RAM while hidden and no CPU while idle.
+
+## Using it
+
+| To | Do this |
+|---|---|
+| Move the time | Drag the timeline, click an hour, scroll the mouse wheel (up = later), or use −/+ in the compact view |
+| Move a whole day | ‹ › beside the date (full view) |
+| Pick a date | Click the date, then a day in the month view |
+| Go back to now | "Now", or the × on the shift chip in the compact view |
+| Copy a city's time | Click the city |
+| Copy with the date, copy all, reorder, set the main city, remove | Right-click a city |
+| See more cities in the compact view | ‹ › on the sides, swipe sideways, or tilt the wheel |
+| Add a city | **+** at the top of the full view |
+| Change the time step, clock format, startup, tray icon | **⋯** at the top of the full view |
+
+Steps land on clean times: at 10:27 with 30 minute steps, back is 10:00 (−30m) and
+forward is 11:00 (+30m). The "main city" (accent bar) is the one the timeline and the
+differences are measured from.
+
+![Picking a date](docs/images/date-picker.png)
 
 ## Install
 
-1. Download the latest `WorldTimeFlyout-<version>-win-x64.zip` from Releases
-   (or from the Actions run artifacts).
-2. Check it: `Get-FileHash .\WorldTimeFlyout-*.zip -Algorithm SHA256` must match the
-   `.sha256` file.
-3. Extract anywhere you keep apps, for example `%LOCALAPPDATA%\Programs\WorldTimeFlyout`,
-   and run `WorldTimeFlyout.exe`. The executable is not code-signed, so Windows may show
-   a SmartScreen prompt the first time.
+1. Download `WorldTimeFlyout-<version>-win-x64.zip` from [Releases](../../releases/latest).
+2. Optional: check it. `Get-FileHash .\WorldTimeFlyout-*.zip -Algorithm SHA256` must
+   match the hash in the release notes and the `.sha256` file.
+3. Extract it anywhere you keep apps, for example
+   `%LOCALAPPDATA%\Programs\WorldTimeFlyout`, and run `WorldTimeFlyout.exe`.
+   The exe is not code-signed, so SmartScreen may ask once ("More info", then
+   "Run anyway").
 
-It starts with Windows by default (per-user Run key, no admin). Turn that off in the
-panel's "More" menu or the tray icon menu.
+It starts with Windows (per user, no admin). Turn that off in the **⋯** menu or the tray
+icon menu.
 
-## Uninstall
+**Update:** Exit from the tray icon, extract the new version over the old folder, start
+it again. Settings are kept.
 
-1. Open the panel's "More" menu (or right-click the tray icon) and turn off
-   "Start with Windows", then choose Exit.
-2. Delete the app folder.
-3. Optionally delete `%LOCALAPPDATA%\WorldTimeFlyout` (settings and log).
+**Uninstall:** turn off "Start with Windows" in the **⋯** menu, choose Exit, delete the
+app folder, and optionally `%LOCALAPPDATA%\WorldTimeFlyout` (settings and log).
+
+## Requirements
+
+- Windows 11, x64. Tested on 24H2 and 26H2, with the taskbar at the bottom of the screen.
+- The .NET runtime and the Windows App SDK are included in the zip.
+
+## Privacy
+
+The app makes no network connections and collects nothing. Your cities and preferences
+are saved in `%LOCALAPPDATA%\WorldTimeFlyout\settings.json`. A small log is kept next to
+it (more detail when started with `--diag`).
 
 ## How it works
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). In short: the app listens for the
-shell's own window events (the documented accessibility mechanism, scoped to the
-ShellExperienceHost process) and reads the calendar card's position through UI
-Automation. Its panel is a non-activating window, so clicking it does not steal focus
-from the calendar.
+The app listens for the shell's own window events (the documented accessibility
+mechanism, scoped to the ShellExperienceHost process) and reads the calendar card's
+position through UI Automation. The panel is a window that does not take focus when
+clicked, so the calendar stays open while you use it. Details:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Build
 
-Builds run on GitHub Actions (`.github/workflows/ci.yml`): unit tests, a NativeAOT
-publish, rendered screenshots, measured size/memory/CPU, a zip with SHA-256, and a
-pre-release for `v*` tags. Locally on Windows with the .NET 10 SDK:
+Builds run on GitHub Actions ([ci.yml](.github/workflows/ci.yml)) on Windows: unit tests,
+a NativeAOT self-contained publish, screenshots rendered by the app, an end-to-end test
+against the real taskbar calendar, measured size/memory/CPU, and a zip with its SHA-256.
+Pushing a `v*` tag publishes a release (tags with a hyphen, like `v0.2.0-beta`, become
+pre-releases).
+
+Locally on Windows with the .NET 10 SDK:
 
     dotnet test --project tests/WorldTime.Core.Tests
     dotnet publish src/WorldTimeFlyout -c Release -r win-x64 -o publish
 
-Command-line options: `--background` (start hidden), `--show`, `--diag` (verbose log
-in `%LOCALAPPDATA%\WorldTimeFlyout\log.txt`), `--settings FILE`.
+Command-line options: `--background` (start hidden), `--show`, `--diag` (verbose log in
+`%LOCALAPPDATA%\WorldTimeFlyout\log.txt`), `--settings FILE`.
 
 ## Known limits
 
-- Detecting the calendar relies on the shell's UI Automation tree. If a Windows update
-  changes it, the panel falls back to the flyout window bounds, and the tray icon always
-  opens the panel on its own.
-- Typing in search or opening a menu needs keyboard focus, which closes the native
-  calendar. The panel stays open until you click elsewhere or press Esc.
-- Windows 11 only (the calendar flyout it attaches to does not exist on Windows 10).
+- Finding the calendar relies on the shell's UI Automation tree. If a Windows update
+  changes it, the panel falls back to the flyout window's bounds, and the tray icon
+  always opens the panel on its own.
+- Typing in search or opening a menu needs keyboard focus, which closes the calendar.
+  The panel then stays until you click elsewhere or press Esc.
+- Windows 11 only: the calendar flyout it attaches to does not exist on Windows 10.
+
+Third-party components and their licenses: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
