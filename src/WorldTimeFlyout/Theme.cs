@@ -76,8 +76,11 @@ public sealed class ThemeManager
     {
         _dq = dq;
         Current = Build();
-        _ui.ColorValuesChanged += (_, _) => RequestRefresh();
-        _a11y.HighContrastChanged += (_, _) => RequestRefresh();
+        // ColorValuesChanged also fires for contrast-theme changes. (AccessibilitySettings
+        // events need a CoreWindow and are unavailable to desktop apps; WM_SETTINGCHANGE
+        // from the message window covers the rest.)
+        try { _ui.ColorValuesChanged += (_, _) => RequestRefresh(); }
+        catch (Exception e) { DiagLog.Write($"UISettings.ColorValuesChanged unavailable: {e.Message}"); }
     }
 
     public Palette Current { get; private set; }

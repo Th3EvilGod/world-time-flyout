@@ -80,7 +80,7 @@ public sealed class AppController : IDisposable
         _messages.TrayContextMenu += (_, _) => ShowTrayMenu();
         _messages.SettingChanged += area =>
         {
-            if (area is "ImmersiveColorSet" or "Colorization" or "WindowsThemeElement" or "") _theme.RequestRefresh();
+            if (area is "ImmersiveColorSet" or "Colorization" or "WindowsThemeElement" or "HighContrast" or "") _theme.RequestRefresh();
             if (area == "intl") _model.RefreshFormat();
         };
         _messages.DisplayChanged += () => _tracker.RequestRefresh();
