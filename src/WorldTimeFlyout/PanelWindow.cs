@@ -1,4 +1,3 @@
-using System.Numerics;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
@@ -31,7 +30,6 @@ public sealed partial class PanelWindow : Window, IPanelHost
     private readonly AlwaysActiveAcrylic _backdrop;
     private readonly OverlappedPresenter _presenter;
     private PanelLayout _layout = PanelLayout.Expanded;
-    private PixelRect _rect;
     private bool _shown;
     private bool _active;
 
@@ -107,18 +105,247 @@ public sealed partial class PanelWindow : Window, IPanelHost
     public event Action? Deactivated;
     /// <summary>The panel needs a different height for search; the controller re-places it.</summary>
     public event Action? SearchChanged;
+    /// <summary>Esc: the controller hides the panel (animated).</summary>
+    public event Action? HideRequested;
     /// <summary>The user chose Exit in a menu.</summary>
     public event Action? ExitRequested;
     /// <summary>A setting that the controller owns changed (startup, tray icon).</summary>
     public event Action? PreferencesChanged;
 
-    // ---------------------------------------------------------------- placement
+    // ---------------------------------------------------------------- placement & motion
+    // The window itself moves and resizes, one step per rendered frame, on the
+    // Windows 11 motion curves (see Motion). Animating content inside a window
+    // that is already in place just looks like it pops up there.
 
+    private PixelRect _rect;          // the visible frame, screen pixels
+    private PixelRect _outer;         // the window including its invisible resize borders
+    private PixelRect _motionFrom, _motionTo;
+    private Motion _motion;
+    private long _motionStart;        // Stopwatch timestamp
+    private Action? _motionDone;
+    private bool _moving;
+    private int _frames;
+    private FrameworkElement? _outgoing;
+
+    public PixelRect Frame => _rect;
+    public bool IsExiting => _moving && _motion.FadeOut;
+
+    /// <summary>Places immediately, without animation.</summary>
     public void Place(PixelRect rect, PanelLayout layout)
     {
+        CancelMotion();
         SetLayout(layout);
         _rect = rect;
         ApplyBounds();
+    }
+
+    /// <summary>How far right a frame has to move to leave its monitor.</summary>
+    public static int OffscreenDistance(PixelRect r) =>
+        Math.Max(1, Win32Util.MonitorFor(r).Bounds.Right - r.Left);
+
+    /// <summary>
+    /// Slides in from the right ("direct entrance": 333 ms, decelerating).
+    /// <paramref name="distance"/>: how far right it starts. <paramref name="startTick"/>
+    /// (Environment.TickCount64) backdates the start to when the calendar began its
+    /// own slide, so the two stay in step even though we hear about it a bit later.
+    /// </summary>
+    public void EnterFromRight(PixelRect target, PanelLayout layout, int distance, long? startTick = null, bool activate = false)
+    {
+        bool wasShown = _shown;
+        CancelMotion();
+        SetLayout(layout);
+        if (!AnimationsEnabled)
+        {
+            _rect = target;
+            ApplyBounds();
+            Show(activate);
+            return;
+        }
+        if (!wasShown)
+        {
+            _rect = Shift(target, distance);
+            ApplyBounds();
+        }
+        Show(activate);
+        // Already on screen (it was sliding out): turn around from where it is.
+        RunMotion(target, Motion.Entrance, null, wasShown ? null : startTick);
+    }
+
+    /// <summary>
+    /// Moves/resizes to a new frame: expand/collapse ("point to point", 250 ms,
+    /// bottom edge fixed) or a small correction.
+    /// </summary>
+    public void MoveTo(PixelRect target, PanelLayout layout, Motion motion)
+    {
+        if (!_shown || !AnimationsEnabled)
+        {
+            Place(target, layout);
+            return;
+        }
+        if (_moving && _motion == Motion.Entrance)
+        {
+            // Still sliding in: aim the slide at the new frame, keep its timing.
+            EndTransition();
+            SetLayout(layout);
+            int dx = _motionFrom.Left - _motionTo.Left;
+            _motionFrom = Shift(target, dx);
+            _motionTo = target;
+            return;
+        }
+        var current = _moving ? _motionTo : _rect;
+        if (target == current && layout == _layout && !IsExiting) return;
+        var fromLayout = _layout;
+        var fromRect = _rect;
+        CancelMotion();
+        SetLayout(layout);
+        if (_layout != fromLayout) BeginTransition(fromLayout, fromRect, target);
+        RunMotion(target, motion, EndTransition);
+    }
+
+    /// <summary>Slides out to the right with a fade ("exit": 167 ms, accelerating), then hides.</summary>
+    public void ExitToRight(int distance, Action? done = null)
+    {
+        if (!_shown) { done?.Invoke(); return; }
+        if (!AnimationsEnabled)
+        {
+            HidePanel();
+            done?.Invoke();
+            return;
+        }
+        if (IsExiting)
+        {
+            _motionDone += done;
+            return;
+        }
+        var from = _rect;
+        CancelMotion();
+        RunMotion(Shift(from, distance), Motion.Exit, () =>
+        {
+            HidePanel();
+            done?.Invoke();
+        });
+    }
+
+    private static PixelRect Shift(PixelRect r, int dx) => new(r.Left + dx, r.Top, r.Right + dx, r.Bottom);
+
+    private void RunMotion(PixelRect target, Motion motion, Action? done, long? startTick = null)
+    {
+        _motionFrom = _rect;
+        _motionTo = target;
+        _motion = motion;
+        _motionDone = done;
+        _frames = 0;
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        long age = startTick is long t ? Math.Clamp(Environment.TickCount64 - t, 0, (long)motion.Milliseconds) : 0;
+        _motionStart = now - age * System.Diagnostics.Stopwatch.Frequency / 1000;
+        if (!_moving)
+        {
+            _moving = true;
+            CompositionTarget.Rendering += OnMotionFrame;
+        }
+        Step();
+    }
+
+    private void OnMotionFrame(object? sender, object e) => Step();
+
+    private void Step()
+    {
+        if (!_moving) return;
+        double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_motionStart).TotalMilliseconds;
+        double t = Math.Clamp(elapsed / _motion.Milliseconds, 0, 1);
+        double p = _motion.Ease(t);
+        static int Lerp(int a, int b, double p) => (int)Math.Round(a + (b - a) * p);
+        var r = new PixelRect(
+            Lerp(_motionFrom.Left, _motionTo.Left, p), Lerp(_motionFrom.Top, _motionTo.Top, p),
+            Lerp(_motionFrom.Right, _motionTo.Right, p), Lerp(_motionFrom.Bottom, _motionTo.Bottom, p));
+        if (_motion.FadeOut) _root.Opacity = 1 - t;
+        SetFrameFast(r);
+        _frames++;
+        if (t < 1) return;
+        _moving = false;
+        CompositionTarget.Rendering -= OnMotionFrame;
+        DiagLog.Detail($"motion {_motion.Name}: {_frames} frames in {elapsed:0} ms");
+        var done = _motionDone;
+        _motionDone = null;
+        done?.Invoke();
+    }
+
+    /// <summary>Stops any motion where it is, drops its completion and ends a view transition.</summary>
+    private void CancelMotion()
+    {
+        if (_moving)
+        {
+            _moving = false;
+            CompositionTarget.Rendering -= OnMotionFrame;
+        }
+        _motionDone = null;
+        EndTransition();
+        _root.Opacity = 1;
+    }
+
+    /// <summary>Per-frame placement: a plain SetWindowPos, without resizing when only moving.</summary>
+    private void SetFrameFast(PixelRect frame)
+    {
+        if (frame == _rect) return;
+        bool sized = frame.Width != _rect.Width || frame.Height != _rect.Height;
+        _rect = frame;
+        _outer = Win32Util.OuterRectForFrame(Hwnd, frame);
+        Win32Util.MoveWindowNoActivate(Hwnd, _outer, resize: sized);
+    }
+
+    private FrameworkElement ViewFor(PanelLayout l) => l == PanelLayout.Expanded ? _expanded : _compact;
+
+    /// <summary>
+    /// Expand/collapse: both views stay laid out at their own final heights,
+    /// pinned to the bottom edge (which does not move), so the moving top edge
+    /// reveals or covers them like the calendar's own card. The old view fades
+    /// out quickly, the new one fades in.
+    /// </summary>
+    private void BeginTransition(PanelLayout from, PixelRect fromRect, PixelRect toRect)
+    {
+        double scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var incoming = ViewFor(_layout);
+        var outgoing = ViewFor(from);
+        Pin(incoming, toRect.Height / scale);
+        Pin(outgoing, fromRect.Height / scale);
+        outgoing.Visibility = Visibility.Visible;
+        outgoing.IsHitTestVisible = false;
+        _outgoing = outgoing;
+        Fade(outgoing, 1, 0, 83);
+        Fade(incoming, 0, 1, 167);
+    }
+
+    private void EndTransition()
+    {
+        if (_outgoing is null) return;
+        _outgoing = null;
+        foreach (var v in new FrameworkElement[] { _expanded, _compact })
+        {
+            v.Height = double.NaN;
+            v.VerticalAlignment = VerticalAlignment.Stretch;
+            v.IsHitTestVisible = true;
+            var visual = ElementCompositionPreview.GetElementVisual(v);
+            visual.StopAnimation("Opacity");
+            visual.Opacity = 1;
+        }
+        _expanded.Visibility = _layout == PanelLayout.Expanded ? Visibility.Visible : Visibility.Collapsed;
+        _compact.Visibility = _layout == PanelLayout.Compact ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static void Pin(FrameworkElement v, double height)
+    {
+        v.Height = height;
+        v.VerticalAlignment = VerticalAlignment.Bottom;
+    }
+
+    private static void Fade(UIElement el, float from, float to, double ms)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(el);
+        var a = visual.Compositor.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(0f, from);
+        a.InsertKeyFrame(1f, to, visual.Compositor.CreateLinearEasingFunction());
+        a.Duration = TimeSpan.FromMilliseconds(ms);
+        visual.StartAnimation("Opacity", a);
     }
 
     /// <summary>
@@ -138,42 +365,41 @@ public sealed partial class PanelWindow : Window, IPanelHost
         if (frame != _rect) ApplyBounds();
     }
 
-    private PixelRect _outer;
-
     /// <summary>Shows without taking activation (beside the calendar).</summary>
-    public void ShowPassive(bool animate)
-    {
-        bool wasShown = _shown;
-        _shown = true;
-        Win32Util.AllowClickActivation = false;
-        AppWindow.Show(false);
-        Win32Util.SetTopmostNoActivate(Hwnd, _outer, show: true);
-        FixBoundsAfterShow();
-        if (!wasShown && animate) PlayEntrance();
-        Render(ChangeKind.Time);
-    }
+    public void ShowPassive() => Show(activate: false);
 
     /// <summary>Shows and takes keyboard focus (tray click, search, menus).</summary>
-    public void ShowActive(bool animate)
+    public void ShowActive() => Show(activate: true);
+
+    private void Show(bool activate)
     {
-        bool wasShown = _shown;
         _shown = true;
-        AppWindow.Show(true);
+        if (!activate) Win32Util.AllowClickActivation = false;
+        AppWindow.Show(activate);
         Win32Util.SetTopmostNoActivate(Hwnd, _outer, show: true);
         FixBoundsAfterShow();
-        ActivateForInput();
-        if (!wasShown && animate) PlayEntrance();
+        if (activate) ActivateForInput();
         Render(ChangeKind.Time);
     }
 
     public void HidePanel()
     {
         if (!_shown) return;
+        CancelMotion();
         _shown = false;
+        CloseOpenPopups();
         if (_expanded.IsSearching) _expanded.SetSearching(false);
+        _expanded.CloseDatePicker();
         Win32Util.AllowClickActivation = false;
         Win32Util.ArmActivation(Hwnd, false);
         AppWindow.Hide();
+    }
+
+    private void CloseOpenPopups()
+    {
+        if (_root.XamlRoot is null) return;
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(_root.XamlRoot))
+            popup.IsOpen = false;
     }
 
     /// <summary>Takes activation so keyboard input and menus work; the calendar will close.</summary>
@@ -198,28 +424,16 @@ public sealed partial class PanelWindow : Window, IPanelHost
         _layout = layout;
         _expanded.Visibility = layout == PanelLayout.Expanded ? Visibility.Visible : Visibility.Collapsed;
         _compact.Visibility = layout == PanelLayout.Compact ? Visibility.Visible : Visibility.Collapsed;
+        if (layout == PanelLayout.Compact) _expanded.CloseDatePicker();
         Render(ChangeKind.Locations);
     }
 
     public void ShowWelcome(bool show) => _expanded.ShowWelcome(show);
 
-    private void PlayEntrance()
+    public void OpenDatePicker()
     {
-        if (!AnimationsEnabled) return;
-        var visual = ElementCompositionPreview.GetElementVisual(_root);
-        ElementCompositionPreview.SetIsTranslationEnabled(_root, true);
-        var comp = visual.Compositor;
-        var ease = comp.CreateCubicBezierEasingFunction(new Vector2(0.1f, 0.9f), new Vector2(0.2f, 1f));
-        var slide = comp.CreateVector3KeyFrameAnimation();
-        slide.InsertKeyFrame(0f, new Vector3(0, 16, 0));
-        slide.InsertKeyFrame(1f, Vector3.Zero, ease);
-        slide.Duration = TimeSpan.FromMilliseconds(250);
-        var fade = comp.CreateScalarKeyFrameAnimation();
-        fade.InsertKeyFrame(0f, 0f);
-        fade.InsertKeyFrame(1f, 1f, ease);
-        fade.Duration = TimeSpan.FromMilliseconds(180);
-        visual.StartAnimation("Translation", slide);
-        visual.StartAnimation("Opacity", fade);
+        SetLayout(PanelLayout.Expanded);
+        _expanded.OpenDatePicker();
     }
 
     // ---------------------------------------------------------------- rendering & theme
@@ -261,7 +475,8 @@ public sealed partial class PanelWindow : Window, IPanelHost
         if (e.Key == Windows.System.VirtualKey.Escape)
         {
             if (_expanded.IsSearching) EndSearch();
-            else HidePanel();
+            else if (_expanded.IsPickingDate) _expanded.CloseDatePicker();
+            else HideRequested?.Invoke();
             e.Handled = true;
         }
     }
@@ -353,47 +568,6 @@ public sealed partial class PanelWindow : Window, IPanelHost
         menu.Items.Add(about);
         menu.Items.Add(Item("Exit", null, () => ExitRequested?.Invoke()));
         menu.ShowAt(target, new FlyoutShowOptions { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight });
-    }
-
-    public void ShowDateTimePicker(FrameworkElement target)
-    {
-        ActivateForInput();
-        var reference = Model.ReferenceReading;
-        if (reference is null) return;
-        var local = reference.Value.Local;
-        var calendar = new CalendarView
-        {
-            SelectionMode = CalendarViewSelectionMode.Single,
-            IsTodayHighlighted = true,
-        };
-        var selectedDate = new DateTimeOffset(local.Year, local.Month, local.Day, 12, 0, 0, TimeSpan.Zero);
-        calendar.SelectedDates.Add(selectedDate);
-        calendar.SetDisplayDate(selectedDate);
-        var time = new TimePicker
-        {
-            Time = new TimeSpan(local.Hour, local.Minute, 0),
-            MinuteIncrement = 5,
-            ClockIdentifier = Model.Format.Is24Hour ? "24HourClock" : "12HourClock",
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-        };
-        var caption = Ui.Text($"Time in {reference.Value.Location.Name}", 12);
-        caption.Foreground = Ui.Brush(Palette.TextSecondary);
-        var go = new Button { Content = "Show this time", HorizontalAlignment = HorizontalAlignment.Stretch, Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
-        var panel = new StackPanel { Spacing = 8, Width = 300 };
-        panel.Children.Add(calendar);
-        panel.Children.Add(caption);
-        panel.Children.Add(time);
-        panel.Children.Add(go);
-        var flyout = new Flyout { Content = panel, Placement = FlyoutPlacementMode.Top };
-        go.Click += (_, _) =>
-        {
-            var date = calendar.SelectedDates.Count > 0 ? calendar.SelectedDates[0] : selectedDate;
-            var t = time.Time;
-            var picked = new LocalDateTime(date.Year, date.Month, date.Day, t.Hours, t.Minutes);
-            Model.Selection.SetLocal(picked, Model.ReferenceZone);
-            flyout.Hide();
-        };
-        flyout.ShowAt(target);
     }
 
     private static MenuFlyoutItem Item(string text, string? glyph, Action onClick)

@@ -218,6 +218,15 @@ public static unsafe class Win32Util
         PInvoke.SetWindowPos((HWND)hwnd, (HWND)(nint)(-1), r.Left, r.Top, r.Width, r.Height, flags);
     }
 
+    /// <summary>One animation step: move (and resize when needed) without touching z-order or activation.</summary>
+    public static void MoveWindowNoActivate(nint hwnd, PixelRect r, bool resize)
+    {
+        var flags = SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+                    SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER |
+                    (resize ? SET_WINDOW_POS_FLAGS.SWP_NOCOPYBITS : SET_WINDOW_POS_FLAGS.SWP_NOSIZE);
+        PInvoke.SetWindowPos((HWND)hwnd, default, r.Left, r.Top, r.Width, r.Height, flags);
+    }
+
     /// <summary>Returns memory to Windows while the panel is hidden; pages come back on demand.</summary>
     public static void TrimWorkingSet() =>
         PInvoke.SetProcessWorkingSetSize(PInvoke.GetCurrentProcess(), unchecked((nuint)(-1)), unchecked((nuint)(-1)));

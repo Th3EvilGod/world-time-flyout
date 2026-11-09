@@ -9,7 +9,8 @@ namespace WorldTimeFlyout.Views;
 /// <summary>
 /// Full view, shown next to the expanded calendar:
 /// header (title, copy all, add, more), scrolling city list, the selected
-/// time with step buttons, and the timeline.
+/// time with previous/next day buttons, and the timeline. The date opens an
+/// inline month view (no popup, so the calendar beside it stays open).
 /// </summary>
 public sealed partial class ExpandedView : Grid
 {
@@ -26,6 +27,10 @@ public sealed partial class ExpandedView : Grid
     private readonly TimeRuler _ruler;
     private readonly Grid _timeArea;
     private readonly SearchView _search;
+    private readonly Grid _datePage;
+    private readonly CalendarView _dates;
+    private readonly Button _today, _cancelDate;
+    private bool _pickingDate, _settingDate;
     private readonly List<LocationRow> _rows = [];
     private Palette? _palette;
     private bool _searching;
@@ -110,8 +115,8 @@ public sealed partial class ExpandedView : Grid
         bar.ColumnDefinitions.Add(Ui.ColStar());
         bar.ColumnDefinitions.Add(Ui.ColAuto());
         bar.ColumnDefinitions.Add(Ui.ColAuto());
-        _prev = Ui.SubtleButton(Ui.Icon(Glyph.ChevronLeft, 12), "Earlier", (_, _) => _host.Model.StepTime(-1));
-        _next = Ui.SubtleButton(Ui.Icon(Glyph.ChevronRight, 12), "Later", (_, _) => _host.Model.StepTime(1));
+        _prev = Ui.SubtleButton(Ui.Icon(Glyph.ChevronLeft, 12), "Previous day", (_, _) => _host.Model.StepDays(-1));
+        _next = Ui.SubtleButton(Ui.Icon(Glyph.ChevronRight, 12), "Next day", (_, _) => _host.Model.StepDays(1));
         _chipText = Ui.Text("", 14, semibold: true);
         _chipText.HorizontalAlignment = HorizontalAlignment.Center;
         _chipSub = Ui.Text("", 12);
@@ -119,12 +124,11 @@ public sealed partial class ExpandedView : Grid
         var chipStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
         chipStack.Children.Add(_chipText);
         chipStack.Children.Add(_chipSub);
-        _chip = Ui.SubtleButton(chipStack, "Pick a date and time", (_, _) => _host.ShowDateTimePicker(_chip!), 36);
+        _chip = Ui.SubtleButton(chipStack, "Pick a date", (_, _) => OpenDatePicker(), 36);
         _chip.Width = double.NaN;
         _chip.HorizontalAlignment = HorizontalAlignment.Stretch;
         _chip.HorizontalContentAlignment = HorizontalAlignment.Center;
         _chip.Padding = new Thickness(8, 0, 8, 0);
-        _chip.ActivatesPanel(host);
         _now = Ui.SubtleButton("Now", "Back to the current time", (_, _) => _host.Model.ResetToNow(), 28);
         _now.FontSize = 12;
         _now.Margin = new Thickness(4, 0, 4, 0);
@@ -133,9 +137,93 @@ public sealed partial class ExpandedView : Grid
         bar.Children.Add(_now.At(0, 2));
         bar.Children.Add(_next.At(0, 3));
         _ruler = new TimeRuler(host) { Margin = new Thickness(0, 2, 0, 0) };
+        AutomationProperties.SetAutomationId(_prev, "PreviousDay");
+        AutomationProperties.SetAutomationId(_next, "NextDay");
+        AutomationProperties.SetAutomationId(_chip, "DateChip");
+        AutomationProperties.SetAutomationId(_now, "NowButton");
         _timeArea.Children.Add(bar.At(0));
         _timeArea.Children.Add(_ruler.At(1));
         Children.Add(_timeArea.At(3));
+
+        // inline date picker (replaces the list and the time area while open)
+        _datePage = new Grid { Visibility = Visibility.Collapsed, Padding = new Thickness(8, 0, 8, 8) };
+        _datePage.RowDefinitions.Add(Ui.RowStar());
+        _datePage.RowDefinitions.Add(Ui.Row(36));
+        _dates = new CalendarView
+        {
+            SelectionMode = CalendarViewSelectionMode.Single,
+            IsTodayHighlighted = true,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            BorderThickness = new Thickness(0),
+            Background = Ui.Transparent,
+        };
+        _dates.SelectedDatesChanged += OnDatePicked;
+        AutomationProperties.SetName(_dates, "Pick a date");
+        AutomationProperties.SetAutomationId(_dates, "DatePicker");
+        var dateBar = new Grid();
+        dateBar.ColumnDefinitions.Add(Ui.ColStar());
+        dateBar.ColumnDefinitions.Add(Ui.ColAuto());
+        _today = Ui.SubtleButton("Today", "Back to the current time", (_, _) => { _host.Model.ResetToNow(); CloseDatePicker(); }, 32);
+        _today.HorizontalAlignment = HorizontalAlignment.Left;
+        _cancelDate = Ui.SubtleButton("Cancel", "Close the date picker", (_, _) => CloseDatePicker(), 32);
+        AutomationProperties.SetAutomationId(_today, "DateToday");
+        AutomationProperties.SetAutomationId(_cancelDate, "DateCancel");
+        dateBar.Children.Add(_today.At(0, 0));
+        dateBar.Children.Add(_cancelDate.At(0, 1));
+        _datePage.Children.Add(_dates.At(0));
+        _datePage.Children.Add(dateBar.At(1));
+        Children.Add(_datePage.At(2, rowSpan: 2));
+    }
+
+    public bool IsPickingDate => _pickingDate;
+
+    public void OpenDatePicker()
+    {
+        if (_searching || _host.Model.ReferenceReading is not { } r) return;
+        try
+        {
+            _pickingDate = true;
+            _settingDate = true;
+            var date = r.Local.Date;
+            var dto = new DateTimeOffset(date.Year, date.Month, date.Day, 12, 0, 0, TimeSpan.Zero);
+            _dates.SelectedDates.Clear();
+            _dates.SelectedDates.Add(dto);
+            _dates.SetDisplayDate(dto);
+        }
+        catch (Exception e)
+        {
+            DiagLog.Write($"date picker: {e}");
+        }
+        finally
+        {
+            _settingDate = false;
+        }
+        _title.Text = "Pick a date";
+        _scroll.Visibility = Visibility.Collapsed;
+        _empty.Visibility = Visibility.Collapsed;
+        _timeArea.Visibility = Visibility.Collapsed;
+        _datePage.Visibility = Visibility.Visible;
+        DiagLog.Detail("date picker opened");
+    }
+
+    public void CloseDatePicker()
+    {
+        if (!_pickingDate) return;
+        _pickingDate = false;
+        _title.Text = "World time";
+        _datePage.Visibility = Visibility.Collapsed;
+        _scroll.Visibility = Visibility.Visible;
+        _timeArea.Visibility = Visibility.Visible;
+        Render(ChangeKind.Locations);
+    }
+
+    private void OnDatePicked(CalendarView sender, CalendarViewSelectedDatesChangedEventArgs e)
+    {
+        if (_settingDate || e.AddedDates.Count == 0) return;
+        var d = e.AddedDates[0];
+        _host.Model.SetDate(new NodaTime.LocalDate(d.Year, d.Month, d.Day));
+        CloseDatePicker();
     }
 
     /// <summary>Minimum height (DIPs) for header, a few rows and the timeline.</summary>
@@ -150,8 +238,9 @@ public sealed partial class ExpandedView : Grid
         _searching = on;
         _search.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         var rest = on ? Visibility.Collapsed : Visibility.Visible;
+        if (on) CloseDatePicker();
         foreach (var child in Children)
-            if (child != _search && child != _welcome && child != _empty) ((UIElement)child).Visibility = rest;
+            if (child != _search && child != _welcome && child != _empty && child != _datePage) ((UIElement)child).Visibility = rest;
         if (on) _search.Open();
         else
         {
@@ -193,14 +282,16 @@ public sealed partial class ExpandedView : Grid
         }
         bool live = model.Selection.IsLive;
         for (int i = 0; i < readings.Count; i++) _rows[i].Update(readings[i], model.Format, live);
-        _empty.Visibility = readings.Count == 0 && !_searching ? Visibility.Visible : Visibility.Collapsed;
+        _empty.Visibility = readings.Count == 0 && !_searching && !_pickingDate ? Visibility.Visible : Visibility.Collapsed;
 
         // selected time, in the reference city
         if (model.ReferenceReading is { } r)
         {
             _chipText.Text = $"{model.Format.ShortDate(r.Local.Date)}, {model.Format.Time(r.Local)}";
-            _chipSub.Text = live ? r.Location.Name : TimeFormat.ShiftFromNow(model.Selection.OffsetFromNow);
-            AutomationProperties.SetName(_chip, $"Selected time {_chipText.Text} in {r.Location.Name}. Pick a date and time.");
+            _chipSub.Text = live ? r.Location.Name : TimeFormat.ShiftFromNow(model.Shift);
+            AutomationProperties.SetName(_chip, live
+                ? $"Selected time {_chipText.Text} in {r.Location.Name}. Pick a date."
+                : $"Selected time {_chipText.Text}, {_chipSub.Text} from now, in {r.Location.Name}. Pick a date.");
         }
         _now.Visibility = live ? Visibility.Collapsed : Visibility.Visible;
         _ruler.Sync();
@@ -210,7 +301,10 @@ public sealed partial class ExpandedView : Grid
     public void ApplyTheme(Palette p)
     {
         _palette = p;
-        foreach (var b in new[] { _copyAll, _add, _more, _prev, _next, _chip, _now }) Ui.StyleSubtle(b, p);
+        foreach (var b in new[] { _copyAll, _add, _more, _prev, _next, _chip, _now, _today, _cancelDate }) Ui.StyleSubtle(b, p);
+        _today.Foreground = Ui.Brush(p.AccentText);
+        _today.Resources["ButtonForeground"] = Ui.Brush(p.AccentText);
+        _today.Resources["ButtonForegroundPointerOver"] = Ui.Brush(p.AccentText);
         _title.Foreground = Ui.Brush(p.TextPrimary);
         _chipText.Foreground = Ui.Brush(p.TextPrimary);
         _chipSub.Foreground = Ui.Brush(p.TextSecondary);

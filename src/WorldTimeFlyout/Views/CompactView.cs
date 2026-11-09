@@ -1,3 +1,4 @@
+using System.Numerics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -9,55 +10,72 @@ using WorldTime.Core;
 namespace WorldTimeFlyout.Views;
 
 /// <summary>
-/// Compact view for the collapsed calendar: exactly three cities per page.
-/// Swipe/drag sideways or use the pips to page; click a time to copy it;
-/// the small step buttons (or the mouse wheel) move the time.
+/// Compact view for the collapsed calendar: three cities as tiles side by side,
+/// with ‹ › on the sides to cycle through the rest (or swipe / sideways wheel),
+/// and a strip below with the shift from now, page pips and time steps.
+/// Click a tile to copy its time; right-click for more; the mouse wheel moves
+/// the time.
 /// </summary>
 public sealed partial class CompactView : Grid
 {
     public const int PageSize = 3;
-    public const double RowHeight = 24;
-    public const double StripHeight = 22;
-    private const double PadTop = 3, PadBottom = 1;
+    public const double TileHeight = 66;
+    public const double StripHeight = 26;
+    private const double PadTop = 6, PadBottom = 2;
 
     /// <summary>
-    /// Height for three rows plus the paging strip (DIPs). At 100% text size this
-    /// is exactly the collapsed calendar's 100 px; larger text sizes grow it.
+    /// Height for the tiles plus the strip (DIPs). At 100% text size this is
+    /// exactly the collapsed calendar's 100 px; larger text sizes grow it.
     /// </summary>
     public static double RequiredHeightFor(double textScale) =>
-        PadTop + (PageSize * RowHeight + StripHeight) * Math.Max(1, textScale) + PadBottom;
-
-    private double _rowHeight = RowHeight;
-    private readonly RowDefinition _stripRow;
+        PadTop + (TileHeight + StripHeight) * Math.Max(1, textScale) + PadBottom;
 
     private readonly IPanelHost _host;
+    private readonly RowDefinition _tileRow, _stripRow;
+    private readonly Button _prevPage, _nextPage;
     private readonly Grid _viewport;
-    private readonly StackPanel _page;
-    private readonly CompactRow[] _rows;
+    private readonly Grid _page;
+    private readonly CompactTile[] _tiles;
     private readonly PipsPager _pips;
     private readonly Button _shift, _earlier, _later;
     private readonly TextBlock _shiftText;
-    private Palette? _palette;
     private int _pageIndex;
+    private int _columns = PageSize;
 
     private bool _pointerDown, _swiping;
-    private double _downX, _downY;
-    private CompactRow? _downRow;
+    private double _downX;
+    private CompactTile? _downTile;
 
     public CompactView(IPanelHost host)
     {
         _host = host;
-        Padding = new Thickness(4, PadTop, 4, PadBottom);
-        RowDefinitions.Add(Ui.RowStar());
+        Padding = new Thickness(6, PadTop, 6, PadBottom);
+        _tileRow = Ui.Row(TileHeight);
         _stripRow = Ui.Row(StripHeight);
+        RowDefinitions.Add(_tileRow);
         RowDefinitions.Add(_stripRow);
+        RowDefinitions.Add(Ui.RowStar());
 
-        _page = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Top };
-        _rows = new CompactRow[PageSize];
+        // tiles: [‹] [tile][tile][tile] [›]
+        var top = new Grid();
+        top.ColumnDefinitions.Add(Ui.ColAuto());
+        top.ColumnDefinitions.Add(Ui.ColStar());
+        top.ColumnDefinitions.Add(Ui.ColAuto());
+        _prevPage = SideButton(Glyph.ChevronLeft, "Previous cities", -1);
+        _nextPage = SideButton(Glyph.ChevronRight, "More cities", 1);
+        AutomationProperties.SetAutomationId(_prevPage, "PrevPage");
+        AutomationProperties.SetAutomationId(_nextPage, "NextPage");
+        _prevPage.Margin = new Thickness(0, 0, 2, 0);
+        _nextPage.Margin = new Thickness(2, 0, 0, 0);
+
+        _page = new Grid { ColumnSpacing = 4 };
+        _tiles = new CompactTile[PageSize];
         for (int i = 0; i < PageSize; i++)
         {
-            _rows[i] = new CompactRow(host);
-            _page.Children.Add(_rows[i]);
+            _page.ColumnDefinitions.Add(Ui.ColStar());
+            _tiles[i] = new CompactTile(host);
+            AutomationProperties.SetAutomationId(_tiles[i], $"Tile{i}");
+            _page.Children.Add(_tiles[i].At(0, i));
         }
         _viewport = new Grid { Background = Ui.Transparent };
         _viewport.Children.Add(_page);
@@ -70,28 +88,31 @@ public sealed partial class CompactView : Grid
         _viewport.PointerCanceled += (_, _) => CancelSwipe();
         _viewport.PointerCaptureLost += (_, _) => CancelSwipe();
         _viewport.PointerWheelChanged += OnWheel;
-        Children.Add(_viewport.At(0));
+        top.Children.Add(_prevPage.At(0, 0));
+        top.Children.Add(_viewport.At(0, 1));
+        top.Children.Add(_nextPage.At(0, 2));
+        Children.Add(top.At(0));
 
-        // bottom strip: [shift chip]   (pips)   [- +]
-        var strip = new Grid();
+        // strip: [shift from now ×]   (pips)   [−30m] [+30m]
+        var strip = new Grid { Margin = new Thickness(0, 2, 0, 0) };
         strip.ColumnDefinitions.Add(Ui.ColStar());
         strip.ColumnDefinitions.Add(Ui.ColAuto());
         strip.ColumnDefinitions.Add(Ui.ColStar());
         _shiftText = Ui.Text("", 12, semibold: true);
-        var shiftContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        var shiftContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
         shiftContent.Children.Add(_shiftText);
         shiftContent.Children.Add(Ui.Icon(Glyph.Cancel, 9));
         _shift = Ui.SubtleButton(shiftContent, "Back to the current time", (_, _) => _host.Model.ResetToNow(), 24);
         _shift.Width = double.NaN;
         _shift.Padding = new Thickness(8, 0, 8, 0);
         _shift.HorizontalAlignment = HorizontalAlignment.Left;
-        _shift.Margin = new Thickness(4, 0, 0, 0);
+        AutomationProperties.SetAutomationId(_shift, "ShiftChip");
 
         _pips = new PipsPager
         {
             MaxVisiblePips = 5,
-            PreviousButtonVisibility = PipsPagerButtonVisibility.VisibleOnPointerOver,
-            NextButtonVisibility = PipsPagerButtonVisibility.VisibleOnPointerOver,
+            PreviousButtonVisibility = PipsPagerButtonVisibility.Collapsed,
+            NextButtonVisibility = PipsPagerButtonVisibility.Collapsed,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
             AllowFocusOnInteraction = false,
@@ -102,13 +123,15 @@ public sealed partial class CompactView : Grid
             if (_pips.SelectedPageIndex != _pageIndex) GoToPage(_pips.SelectedPageIndex, animate: true);
         };
 
-        var steps = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 0, 4, 0) };
+        var steps = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         _earlier = Ui.SubtleButton("", "Earlier", (_, _) => _host.Model.StepTime(-1), 24);
         _later = Ui.SubtleButton("", "Later", (_, _) => _host.Model.StepTime(1), 24);
+        AutomationProperties.SetAutomationId(_earlier, "Earlier");
+        AutomationProperties.SetAutomationId(_later, "Later");
         foreach (var b in new[] { _earlier, _later })
         {
             b.FontSize = 12;
-            b.Padding = new Thickness(6, 0, 6, 0);
+            b.Padding = new Thickness(7, 0, 7, 0);
             steps.Children.Add(b);
         }
         strip.Children.Add(_shift.At(0, 0));
@@ -117,32 +140,61 @@ public sealed partial class CompactView : Grid
         Children.Add(strip.At(1));
     }
 
-    private int PageCount => Math.Max(1, (int)Math.Ceiling(_host.Model.Readings.Count / (double)PageSize));
+    private Button SideButton(string glyph, string label, int direction)
+    {
+        var b = Ui.SubtleButton(Ui.Icon(glyph, 10), label, (_, _) => Cycle(direction), 22);
+        b.Height = double.NaN;
+        b.VerticalAlignment = VerticalAlignment.Stretch;
+        return b;
+    }
+
+    private int Count => _host.Model.Readings.Count;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(Count / (double)PageSize));
 
     public void Render(ChangeKind kind)
     {
         var model = _host.Model;
         var readings = model.Readings;
         if (_pageIndex >= PageCount) _pageIndex = PageCount - 1;
+
+        // up to three cities fill the width; more keep three columns and page
+        int columns = Math.Clamp(readings.Count, 1, PageSize);
+        if (columns != _columns)
+        {
+            _columns = columns;
+            for (int i = 0; i < PageSize; i++)
+                _page.ColumnDefinitions[i].Width = i < columns ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        }
+        bool paging = readings.Count > PageSize;
+        _prevPage.Visibility = _nextPage.Visibility = paging ? Visibility.Visible : Visibility.Collapsed;
+
         for (int i = 0; i < PageSize; i++)
         {
             int idx = _pageIndex * PageSize + i;
-            bool has = idx < readings.Count;
-            _rows[i].Visibility = has ? Visibility.Visible : Visibility.Collapsed;
-            if (has) _rows[i].Update(readings[idx], model.Format);
+            bool has = idx < readings.Count && i < columns;
+            _tiles[i].Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+            if (has) _tiles[i].Update(readings[idx], model.Format);
         }
         _pips.NumberOfPages = PageCount;
         _pips.SelectedPageIndex = _pageIndex;
-        _pips.Visibility = PageCount > 1 ? Visibility.Visible : Visibility.Collapsed;
+        _pips.Visibility = paging ? Visibility.Visible : Visibility.Collapsed;
 
         bool live = model.Selection.IsLive;
         _shift.Visibility = live ? Visibility.Collapsed : Visibility.Visible;
-        _shiftText.Text = TimeFormat.ShiftFromNow(model.Selection.OffsetFromNow);
+        _shiftText.Text = TimeFormat.ShiftFromNow(model.Shift);
         string step = model.StepMinutes == 60 ? "1h" : $"{model.StepMinutes}m";
         _earlier.Content = "−" + step;
         _later.Content = "+" + step;
         ToolTipService.SetToolTip(_earlier, $"{step} earlier");
         ToolTipService.SetToolTip(_later, $"{step} later");
+    }
+
+    /// <summary>‹ › wrap around: after the last page comes the first.</summary>
+    private void Cycle(int direction)
+    {
+        if (PageCount <= 1) return;
+        int target = ((_pageIndex + direction) % PageCount + PageCount) % PageCount;
+        GoToPage(target, animate: true, direction: direction);
     }
 
     private void GoToPage(int page, bool animate, int direction = 0)
@@ -155,19 +207,20 @@ public sealed partial class CompactView : Grid
         else ResetTranslation();
     }
 
+    /// <summary>New page slides in from the side it came from (Windows 11 entrance curve, 250 ms).</summary>
     private void SlideIn(int direction)
     {
         var visual = ElementCompositionPreview.GetElementVisual(_page);
         var comp = visual.Compositor;
+        var ease = comp.CreateCubicBezierEasingFunction(new Vector2(0f, 0f), new Vector2(0f, 1f));
         var anim = comp.CreateVector3KeyFrameAnimation();
-        var ease = comp.CreateCubicBezierEasingFunction(new System.Numerics.Vector2(0.1f, 0.9f), new System.Numerics.Vector2(0.2f, 1f));
-        anim.InsertKeyFrame(0f, new System.Numerics.Vector3(direction * 40f, 0, 0));
-        anim.InsertKeyFrame(1f, System.Numerics.Vector3.Zero, ease);
-        anim.Duration = TimeSpan.FromMilliseconds(220);
+        anim.InsertKeyFrame(0f, new Vector3(direction * 48f, 0, 0));
+        anim.InsertKeyFrame(1f, Vector3.Zero, ease);
+        anim.Duration = TimeSpan.FromMilliseconds(250);
         var fade = comp.CreateScalarKeyFrameAnimation();
         fade.InsertKeyFrame(0f, 0f);
-        fade.InsertKeyFrame(1f, 1f, ease);
-        fade.Duration = TimeSpan.FromMilliseconds(180);
+        fade.InsertKeyFrame(1f, 1f, comp.CreateLinearEasingFunction());
+        fade.Duration = TimeSpan.FromMilliseconds(167);
         visual.StartAnimation("Translation", anim);
         visual.StartAnimation("Opacity", fade);
     }
@@ -177,17 +230,17 @@ public sealed partial class CompactView : Grid
         var visual = ElementCompositionPreview.GetElementVisual(_page);
         visual.StopAnimation("Translation");
         visual.StopAnimation("Opacity");
-        visual.Properties.InsertVector3("Translation", System.Numerics.Vector3.Zero);
+        visual.Properties.InsertVector3("Translation", Vector3.Zero);
         visual.Opacity = 1;
     }
 
     private void SetDragOffset(double dx)
     {
         var visual = ElementCompositionPreview.GetElementVisual(_page);
-        visual.Properties.InsertVector3("Translation", new System.Numerics.Vector3((float)dx, 0, 0));
+        visual.Properties.InsertVector3("Translation", new Vector3((float)dx, 0, 0));
     }
 
-    // swipe / click handling on the rows
+    // swipe / click handling on the tiles
     private void OnPressed(object sender, PointerRoutedEventArgs e)
     {
         var pt = e.GetCurrentPoint(_viewport);
@@ -195,8 +248,8 @@ public sealed partial class CompactView : Grid
         _pointerDown = true;
         _swiping = false;
         _downX = pt.Position.X;
-        _downY = pt.Position.Y;
-        _downRow = RowAt(_downY);
+        _downTile = TileFrom(e.OriginalSource as DependencyObject);
+        _downTile?.SetPressed(true);
         _viewport.CapturePointer(e.Pointer);
     }
 
@@ -204,13 +257,12 @@ public sealed partial class CompactView : Grid
     {
         if (!_pointerDown) return;
         double dx = e.GetCurrentPoint(_viewport).Position.X - _downX;
-        if (!_swiping && Math.Abs(dx) > 8 && PageCount > 1) _swiping = true;
-        if (_swiping)
+        if (!_swiping && Math.Abs(dx) > 8 && PageCount > 1)
         {
-            // resist at the ends
-            bool edge = (dx > 0 && _pageIndex == 0) || (dx < 0 && _pageIndex == PageCount - 1);
-            SetDragOffset(edge ? dx / 4 : dx);
+            _swiping = true;
+            _downTile?.SetPressed(false);
         }
+        if (_swiping) SetDragOffset(dx);
     }
 
     private void OnReleased(object sender, PointerRoutedEventArgs e)
@@ -218,17 +270,16 @@ public sealed partial class CompactView : Grid
         if (!_pointerDown) return;
         _pointerDown = false;
         _viewport.ReleasePointerCapture(e.Pointer);
+        _downTile?.SetPressed(false);
         double dx = e.GetCurrentPoint(_viewport).Position.X - _downX;
         if (_swiping)
         {
             _swiping = false;
-            int target = _pageIndex + (dx < -40 ? 1 : dx > 40 ? -1 : 0);
-            target = Math.Clamp(target, 0, PageCount - 1);
-            if (target != _pageIndex) GoToPage(target, animate: true, direction: target > _pageIndex ? 1 : -1);
+            if (Math.Abs(dx) > 40) Cycle(dx < 0 ? 1 : -1);
             else ResetTranslation();
             return;
         }
-        _downRow?.Activate();
+        _downTile?.Activate();
     }
 
     private void CancelSwipe()
@@ -236,13 +287,18 @@ public sealed partial class CompactView : Grid
         if (!_pointerDown) return;
         _pointerDown = false;
         _swiping = false;
+        _downTile?.SetPressed(false);
         ResetTranslation();
     }
 
-    private CompactRow? RowAt(double y)
+    private static CompactTile? TileFrom(DependencyObject? d)
     {
-        int i = (int)(y / _rowHeight);
-        return i >= 0 && i < PageSize && _rows[i].Visibility == Visibility.Visible ? _rows[i] : null;
+        while (d is not null)
+        {
+            if (d is CompactTile t) return t.Visibility == Visibility.Visible ? t : null;
+            d = VisualTreeHelper.GetParent(d);
+        }
+        return null;
     }
 
     private void OnWheel(object sender, PointerRoutedEventArgs e)
@@ -250,31 +306,29 @@ public sealed partial class CompactView : Grid
         var props = e.GetCurrentPoint(_viewport).Properties;
         int delta = props.MouseWheelDelta;
         if (delta == 0) return;
-        if (props.IsHorizontalMouseWheel)
-            GoToPage(_pageIndex + Math.Sign(delta), animate: true);
-        else
-            _host.Model.StepTime(-Math.Sign(delta));
+        if (props.IsHorizontalMouseWheel) Cycle(Math.Sign(delta));
+        else _host.Model.StepTime(-Math.Sign(delta));
         e.Handled = true;
     }
 
     public void SetTextScale(double scale)
     {
         scale = Math.Max(1, scale);
-        _rowHeight = RowHeight * scale;
-        foreach (var r in _rows) r.Height = _rowHeight;
+        _tileRow.Height = new GridLength(TileHeight * scale);
         _stripRow.Height = new GridLength(StripHeight * scale);
     }
 
     public void ApplyTheme(Palette p)
     {
-        _palette = p;
-        foreach (var b in new[] { _shift, _earlier, _later }) Ui.StyleSubtle(b, p);
+        foreach (var b in new[] { _shift, _earlier, _later, _prevPage, _nextPage }) Ui.StyleSubtle(b, p);
         _shift.Foreground = Ui.Brush(p.AccentText);
         _shift.Resources["ButtonForeground"] = Ui.Brush(p.AccentText);
         _shift.Resources["ButtonForegroundPointerOver"] = Ui.Brush(p.AccentText);
         _shiftText.Foreground = Ui.Brush(p.AccentText);
         _earlier.Foreground = Ui.Brush(p.TextSecondary);
         _later.Foreground = Ui.Brush(p.TextSecondary);
-        foreach (var r in _rows) r.ApplyTheme(p);
+        _prevPage.Foreground = Ui.Brush(p.TextSecondary);
+        _nextPage.Foreground = Ui.Brush(p.TextSecondary);
+        foreach (var t in _tiles) t.ApplyTheme(p);
     }
 }

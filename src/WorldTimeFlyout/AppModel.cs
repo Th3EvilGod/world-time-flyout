@@ -80,6 +80,11 @@ public sealed class AppModel
     public void Tick() => Selection.Tick();
     public void ResetToNow() => Selection.ResetToNow();
     public void StepTime(int count) => Selection.Step(count, ReferenceZone, StepMinutes);
+    public void StepDays(int count) => Selection.StepDays(count, ReferenceZone, StepMinutes);
+    public void SetDate(LocalDate date) => Selection.SetDate(date, ReferenceZone, StepMinutes);
+
+    /// <summary>How far the cursor is from now, in clean steps ("-30m", "+1d 2h"); zero while live.</summary>
+    public Duration Shift => Selection.OffsetFromAnchor(ReferenceZone, StepMinutes);
     public void SetInstant(Instant i) => Selection.Set(i);
 
     // ---------------------------------------------------------------- locations

@@ -11,10 +11,14 @@ integration still needs confirming on real Windows 11 desktops (see "Known limit
 
 - Opens automatically beside the native calendar when you click the taskbar clock
   (or press Win+N). Closes with it.
-- Follows the calendar: full view when the calendar is expanded, a three-city compact
-  view when it is collapsed.
-- One shared time cursor for every city. Drag the timeline, click an hour, use the
-  arrows or the mouse wheel. "Now" jumps back.
+- Follows the calendar: full view when the calendar is expanded, three city tiles when it
+  is collapsed (‹ › cycle through the rest). Slides in, resizes and slides out together
+  with the calendar, on the Windows 11 motion curves.
+- One shared time cursor for every city. Drag the timeline, click an hour, or use the
+  mouse wheel. The arrows beside the date move a whole day; click the date to pick one
+  from a month view. In the compact view −/+ move by the time step (30 minutes by
+  default) from a clean time: at 10:27 the steps are 10:00 and 11:00, shown as −30m and
+  +30m. "Now" (or the × on the shift) jumps back.
 - Click any time to copy it ("New York: 9:00 AM"). Right-click for copy with date,
   copy all, reorder, set the reference city, remove.
 - Offline search across about 34,000 cities, plus countries, IANA zones

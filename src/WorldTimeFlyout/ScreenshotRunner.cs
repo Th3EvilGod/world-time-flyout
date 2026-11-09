@@ -48,14 +48,35 @@ public sealed class ScreenshotRunner(AppController controller, string dir)
             await Shot("compact-dark-red", true, red, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
             await Shot("compact-light", false, blue, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
 
+            model.StepDays(1);
+            await Shot("expanded-next-day-dark-red", true, red, PanelLayout.Expanded, 336, 455);
+            model.ResetToNow();
+
+            panel.Place(Rect(336, 455), PanelLayout.Expanded);
+            panel.OpenDatePicker();
+            await Shot("date-picker-dark-red", true, red, PanelLayout.Expanded, 336, 455, keepState: true);
+            await Shot("date-picker-light", false, blue, PanelLayout.Expanded, 336, 455, keepState: true);
+            panel.Place(Rect(336, 455), PanelLayout.Compact); // closes the picker
+            panel.Place(Rect(336, 455), PanelLayout.Expanded);
+
             model.StepTime(6); // +3h with 30 minute steps
             await Shot("expanded-shifted-dark-orange", true, orange, PanelLayout.Expanded, 336, 455);
             await Shot("compact-shifted-light-purple", false, purple, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
             model.ResetToNow();
 
+            model.StepTime(-1);
+            await Shot("compact-back-one-step-dark-red", true, red, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
+            model.ResetToNow();
+
             model.SetClock(ClockStyle.H24);
             await Shot("expanded-24h-light", false, blue, PanelLayout.Expanded, 336, 455);
+            await Shot("compact-24h-dark-red", true, red, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
             model.SetClock(ClockStyle.H12);
+
+            // three cities: tiles fill the width, no paging
+            while (model.Locations.Count > 3) model.Remove(model.Locations[^1].Id);
+            await Shot("compact-three-dark-red", true, red, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
+            await Shot("compact-three-light", false, blue, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
 
             panel.Place(Rect(336, 455), PanelLayout.Expanded);
             panel.BeginSearch();
@@ -91,7 +112,7 @@ public sealed class ScreenshotRunner(AppController controller, string dir)
         controller.Theme.Override(dark, accent);
         var rect = Rect(wDip, hDip);
         if (!keepState) panel.Place(rect, layout);
-        panel.ShowPassive(animate: false);
+        panel.ShowPassive();
         if (typed is not null) TypeIntoSearch(panel, typed);
         await Task.Delay(typed is null ? 700 : 1500);
 

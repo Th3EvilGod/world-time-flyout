@@ -28,6 +28,11 @@ public sealed record Palette(
     Color OnAccent,
     Color SolidBackground)
 {
+    /// <summary>Compact-view tiles: card fill at rest, control fills on hover/press.</summary>
+    public Color TileFill => HighContrast ? SolidBackground : CardFill;
+    public Color TileHover => HighContrast ? SubtleHover : Dark ? C(0x15FFFFFF) : C(0x80F9F9F9);
+    public Color TilePressed => HighContrast ? SubtlePressed : Dark ? C(0x08FFFFFF) : C(0x4DF9F9F9);
+
     private static Color C(uint argb) =>
         Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
 

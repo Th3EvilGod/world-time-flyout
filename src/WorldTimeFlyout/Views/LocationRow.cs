@@ -150,58 +150,65 @@ public sealed partial class LocationRow : Grid
     }
 }
 
-/// <summary>A single line in the compact (collapsed calendar) view.</summary>
-public sealed partial class CompactRow : Grid
+/// <summary>
+/// One city as a tile in the compact (collapsed calendar) view: name, time and
+/// the difference from the reference city. The reference city carries the
+/// accent pill along its bottom edge, like a selected tab in Windows 11.
+/// </summary>
+public sealed partial class CompactTile : Grid
 {
     private readonly IPanelHost _host;
     private readonly Border _pill;
     private readonly TextBlock _name;
-    private readonly TextBlock _badge;
     private readonly TextBlock _time;
+    private readonly TextBlock _sub;
     private readonly FontIcon _copied;
     private LocationReading _reading;
-    private bool _hover;
+    private bool _hover, _pressed;
     private Palette? _palette;
     private DateTime _copiedUntil;
 
-    public CompactRow(IPanelHost host)
+    public CompactTile(IPanelHost host)
     {
         _host = host;
-        Height = CompactView.RowHeight;
         CornerRadius = new CornerRadius(4);
-        Padding = new Thickness(10, 0, 10, 0);
-        Background = Ui.Transparent;
-        ColumnDefinitions.Add(Ui.ColStar());
-        ColumnDefinitions.Add(Ui.ColAuto());
-        ColumnDefinitions.Add(Ui.ColAuto());
+        BorderThickness = new Thickness(1);
+        Padding = new Thickness(6, 0, 6, 0);
+
+        _name = Ui.Text("", 12);
+        _time = Ui.Text("", 17, semibold: true);
+        _sub = Ui.Text("", 11);
+        foreach (var t in new[] { _name, _time, _sub })
+        {
+            t.HorizontalAlignment = HorizontalAlignment.Center;
+            t.TextAlignment = TextAlignment.Center;
+        }
+        _time.Margin = new Thickness(0, -1, 0, 1);
+        _copied = Ui.Icon(Glyph.Check, 16);
+        _copied.Visibility = Visibility.Collapsed;
+        var timeCell = new Grid { Height = 24 };
+        timeCell.Children.Add(_time);
+        timeCell.Children.Add(_copied);
+
+        var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 0, 2) };
+        stack.Children.Add(_name);
+        stack.Children.Add(timeCell);
+        stack.Children.Add(_sub);
 
         _pill = new Border
         {
-            Width = 3,
-            Height = 14,
+            Width = 16,
+            Height = 3,
             CornerRadius = new CornerRadius(1.5),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(-10, 0, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 0, 2),
         };
-        _name = Ui.Text("", 14);
-        _badge = Ui.Text("", 12);
-        _badge.Margin = new Thickness(8, 1, 0, 0);
-        _time = Ui.Text("", 14, semibold: true);
-        _time.Margin = new Thickness(8, 0, 0, 0);
-        _time.HorizontalAlignment = HorizontalAlignment.Right;
-        _copied = Ui.Icon(Glyph.Check, 14);
-        _copied.Visibility = Visibility.Collapsed;
-        _copied.HorizontalAlignment = HorizontalAlignment.Right;
-
-        Children.Add(_pill.At(0, 0));
-        Children.Add(_name.At(0, 0));
-        Children.Add(_badge.At(0, 1));
-        Children.Add(_time.At(0, 2));
-        Children.Add(_copied.At(0, 2));
+        Children.Add(stack);
+        Children.Add(_pill);
 
         PointerEntered += (_, _) => { _hover = true; Paint(); };
-        PointerExited += (_, _) => { _hover = false; Paint(); };
+        PointerExited += (_, _) => { _hover = false; _pressed = false; Paint(); };
         RightTapped += (_, e) =>
         {
             e.Handled = true;
@@ -210,7 +217,13 @@ public sealed partial class CompactRow : Grid
         ToolTipService.SetToolTip(this, "Click to copy · right-click for more");
     }
 
-    /// <summary>Raised on a click that was not part of a swipe.</summary>
+    public void SetPressed(bool pressed)
+    {
+        _pressed = pressed;
+        Paint();
+    }
+
+    /// <summary>A click that was not part of a swipe: copy "City: time".</summary>
     public void Activate()
     {
         if (!_host.Copy(_host.Model.CopyText(_reading, withDate: false))) return;
@@ -233,12 +246,18 @@ public sealed partial class CompactRow : Grid
     {
         _reading = r;
         _name.Text = r.Location.Name;
-        _name.FontWeight = r.IsReference ? FontWeights.SemiBold : FontWeights.Normal;
         _time.Text = f.Time(r.Local);
-        _badge.Text = r.DayDifference == 0 ? "" : f.DayName(r.Local.Date);
-        _badge.Visibility = r.DayDifference == 0 ? Visibility.Collapsed : Visibility.Visible;
-        AutomationProperties.SetName(this, $"{r.Location.Name}, {_time.Text} {_badge.Text}".Trim());
+        _sub.Text = Subtitle(r, f);
+        AutomationProperties.SetName(this, $"{r.Location.Name}, {_time.Text}, {_sub.Text}");
         Paint();
+    }
+
+    /// <summary>"UTC+4" for the reference city, "−9h" or "Tue · +5h" for the others.</summary>
+    internal static string Subtitle(LocationReading r, TimeFormat f)
+    {
+        if (r.IsReference) return TimeFormat.UtcOffset(r.Offset);
+        string diff = TimeFormat.OffsetDifference(r.DifferenceFromReference);
+        return r.DayDifference == 0 ? diff : $"{f.DayName(r.Local.Date)} · {diff}";
     }
 
     public void ApplyTheme(Palette p)
@@ -250,11 +269,12 @@ public sealed partial class CompactRow : Grid
     private void Paint()
     {
         if (_palette is not { } p) return;
-        Background = _hover ? Ui.Brush(p.SubtleHover) : Ui.Transparent;
+        Background = Ui.Brush(_pressed ? p.TilePressed : _hover ? p.TileHover : p.TileFill);
+        BorderBrush = Ui.Brush(p.ControlStroke);
         _pill.Background = _reading.IsReference ? Ui.Brush(p.Accent) : Ui.Transparent;
-        _name.Foreground = Ui.Brush(p.TextPrimary);
-        _badge.Foreground = Ui.Brush(p.TextTertiary);
+        _name.Foreground = Ui.Brush(_reading.IsReference ? p.TextPrimary : p.TextSecondary);
         _time.Foreground = Ui.Brush(p.TextPrimary);
+        _sub.Foreground = Ui.Brush(p.TextTertiary);
         _copied.Foreground = Ui.Brush(p.AccentText);
     }
 }

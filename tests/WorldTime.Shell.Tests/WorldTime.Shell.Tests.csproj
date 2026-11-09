@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="..\..\src\WorldTime.Shell\CalendarGeometry.cs" Link="CalendarGeometry.cs" />
     <Compile Include="..\..\src\WorldTime.Shell\ScreenTypes.cs" Link="ScreenTypes.cs" />
+    <Compile Include="..\..\src\WorldTimeFlyout\Motion.cs" Link="Motion.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.3" />

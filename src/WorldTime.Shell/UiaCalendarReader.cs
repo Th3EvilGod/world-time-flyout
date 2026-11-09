@@ -22,6 +22,11 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
     private IUIAutomationCondition* _keyCondition;
     private IUIAutomationTreeWalker* _walker;
 
+    // Fast path: after a full search, keep the card and month-grid elements and
+    // only refresh their bounds (one small cross-process call each).
+    private IUIAutomationElement* _cardEl, _gridEl;
+    private nint _cachedFor;
+
     public UiaCalendarReader()
     {
         Guid clsid = ClsidCUIAutomation, iid = IidIUIAutomation;
@@ -79,6 +84,8 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
             found = root->FindAllBuildCache(TreeScope.TreeScope_Descendants, _keyCondition, _cache);
             var keys = new List<UiNode>();
             var ancestors = new List<UiNode>();
+            DropCached();
+            _cachedFor = hwnd;
             int n = found is null ? 0 : found->Length;
             for (int i = 0; i < n; i++)
             {
@@ -89,6 +96,8 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
                     keys.Add(node);
                     if (withAncestors && node.IsExpandButton && ancestors.Count == 0)
                         ReadAncestors(el, ancestors);
+                    if (node.IsCard && _cardEl is null) { el->AddRef(); _cardEl = el; }
+                    else if (node.IsCalendarGrid && node.ControlType == UiNode.CalendarControlType && _gridEl is null) { el->AddRef(); _gridEl = el; }
                 }
                 finally
                 {
@@ -107,6 +116,41 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
             if (found is not null) found->Release();
             if (root is not null) root->Release();
         }
+    }
+
+    /// <summary>
+    /// Refreshes only the card and month grid found by the last <see cref="Read"/>
+    /// for this window. Returns null when that is not possible (call Read).
+    /// </summary>
+    public List<UiNode>? ReadFast(nint hwnd)
+    {
+        if (hwnd != _cachedFor || _cardEl is null) return null;
+        try
+        {
+            var list = new List<UiNode>(2) { Refresh(_cardEl) };
+            if (_gridEl is not null) list.Add(Refresh(_gridEl));
+            return list;
+        }
+        catch (Exception e) when (e is COMException or ArgumentException or UnauthorizedAccessException
+                                       or InvalidOperationException or TimeoutException)
+        {
+            DropCached();
+            return null;
+        }
+    }
+
+    private UiNode Refresh(IUIAutomationElement* el)
+    {
+        var updated = el->BuildUpdatedCache(_cache);
+        try { return ReadCached(updated); }
+        finally { updated->Release(); }
+    }
+
+    private void DropCached()
+    {
+        if (_cardEl is not null) { _cardEl->Release(); _cardEl = null; }
+        if (_gridEl is not null) { _gridEl->Release(); _gridEl = null; }
+        _cachedFor = 0;
     }
 
     private void ReadAncestors(IUIAutomationElement* el, List<UiNode> into)
@@ -158,6 +202,7 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
 
     public void Dispose()
     {
+        DropCached();
         if (_walker is not null) { _walker->Release(); _walker = null; }
         if (_keyCondition is not null) { _keyCondition->Release(); _keyCondition = null; }
         if (_cache is not null) { _cache->Release(); _cache = null; }

@@ -218,3 +218,84 @@ public class EmptyListTests
         Assert.Empty(rows);
     }
 }
+
+public class SteppingFromNowTests
+{
+    private static readonly DateTimeZone Yerevan = Zones.Get("Asia/Yerevan");
+
+    // 22:27 in Yerevan
+    private static TimeSelection At2227() => new(new TestClock(TimeMathTests.I("2026-11-09T18:27:40Z")));
+
+    private static string Local(Instant i) =>
+        NodaTime.Text.LocalDateTimePattern.CreateWithInvariantCulture("yyyy-MM-dd HH:mm").Format(i.InZone(Yerevan).LocalDateTime);
+
+    [Fact]
+    public void Back_from_now_is_a_whole_step_on_a_clean_time()
+    {
+        var s = At2227();
+        s.Step(-1, Yerevan, 30);
+        Assert.Equal("2026-11-09 22:00", Local(s.Selected));
+        Assert.Equal("−30m", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+        s.Step(-1, Yerevan, 30);
+        Assert.Equal("2026-11-09 21:30", Local(s.Selected));
+        Assert.Equal("−1h", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+    }
+
+    [Fact]
+    public void Forward_from_now_is_a_whole_step_on_a_clean_time()
+    {
+        var s = At2227();
+        s.Step(1, Yerevan, 30);
+        Assert.Equal("2026-11-09 23:00", Local(s.Selected));
+        Assert.Equal("+30m", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+        s.Step(1, Yerevan, 30);
+        Assert.Equal("+1h", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+        s.Step(-2, Yerevan, 30);
+        Assert.True(s.IsLive == false);
+        Assert.Equal("2026-11-09 22:30", Local(s.Selected)); // the anchor itself
+    }
+
+    [Fact]
+    public void Hour_steps_round_to_the_nearest_hour_first()
+    {
+        var s = At2227();
+        s.Step(1, Yerevan, 60);
+        Assert.Equal("2026-11-09 23:00", Local(s.Selected)); // anchor 22:00, +1h
+        Assert.Equal("+1h", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 60)));
+    }
+
+    [Fact]
+    public void Day_steps_keep_the_time_of_day()
+    {
+        var s = At2227();
+        s.StepDays(1, Yerevan, 30);
+        Assert.Equal("2026-11-10 22:30", Local(s.Selected));
+        Assert.Equal("+1d", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+        s.StepDays(-3, Yerevan, 30);
+        Assert.Equal("2026-11-07 22:30", Local(s.Selected));
+    }
+
+    [Fact]
+    public void Picking_a_date_keeps_the_time_of_day()
+    {
+        var s = At2227();
+        s.SetDate(new LocalDate(2026, 11, 9), Yerevan, 30);
+        Assert.True(s.IsLive); // today while live: nothing to do
+        s.SetDate(new LocalDate(2026, 11, 12), Yerevan, 30);
+        Assert.Equal("2026-11-12 22:30", Local(s.Selected));
+        Assert.Equal("+3d", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+        s.Step(-1, Yerevan, 30);
+        s.SetDate(new LocalDate(2026, 11, 9), Yerevan, 30);
+        Assert.Equal("2026-11-09 22:00", Local(s.Selected));
+        Assert.Equal("−30m", TimeFormat.ShiftFromNow(s.OffsetFromAnchor(Yerevan, 30)));
+    }
+
+    [Fact]
+    public void Day_steps_across_dst_keep_wall_clock_time()
+    {
+        var ny = Zones.Get("America/New_York");
+        var s = new TimeSelection(new TestClock(TimeMathTests.I("2026-03-07T17:00:00Z"))); // 12:00 EST
+        s.StepDays(1, ny, 30);
+        Assert.Equal(TimeMathTests.I("2026-03-08T16:00:00Z"), s.Selected); // 12:00 EDT next day
+    }
+}

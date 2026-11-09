@@ -29,6 +29,7 @@ public sealed class AppController : IDisposable
     private readonly DispatcherQueueTimer _minuteTimer;
     private readonly DispatcherQueueTimer _hideCheck;
     private readonly DispatcherQueueTimer _trimTimer;
+    private readonly DispatcherQueueTimer _reattachCheck;
     private PanelState _state = PanelState.Hidden;
     private CalendarState? _calendar;
     private readonly string _exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "WorldTimeFlyout.exe");
@@ -54,6 +55,7 @@ public sealed class AppController : IDisposable
 
         _panel = new PanelWindow(_model, _theme);
         _panel.Deactivated += OnPanelDeactivated;
+        _panel.HideRequested += () => HidePanel(animate: true);
         _panel.SearchChanged += () => { if (_state != PanelState.Hidden) PlaceStandaloneOrAttached(); };
         _panel.ExitRequested += () => Application.Current.Exit();
         _panel.PreferencesChanged += ApplyPreferences;
@@ -71,6 +73,20 @@ public sealed class AppController : IDisposable
         _hideCheck.IsRepeating = false;
         _hideCheck.Interval = TimeSpan.FromMilliseconds(120);
         _hideCheck.Tick += (_, _) => HideIfOrphaned();
+
+        // The panel starts sliding out as soon as the calendar loses the
+        // foreground. If the calendar turns out to still be open, come back.
+        _reattachCheck = _dq.CreateTimer();
+        _reattachCheck.IsRepeating = false;
+        _reattachCheck.Interval = TimeSpan.FromMilliseconds(700);
+        _reattachCheck.Tick += (_, _) =>
+        {
+            if (_state == PanelState.Hidden && _tracker.FlyoutWindow != 0 && _tracker.Current is { } cal)
+            {
+                DiagLog.Detail("calendar still open after closing started: re-attaching");
+                OnCalendarOpened(cal);
+            }
+        };
     }
 
     public bool FirstRun { get; }
@@ -93,7 +109,9 @@ public sealed class AppController : IDisposable
         ApplyPreferences();
 
         _tracker.Log += m => DiagLog.Detail(m);
+        _tracker.Opening += s => _dq.TryEnqueue(() => OnCalendarOpening(s));
         _tracker.Opened += s => _dq.TryEnqueue(() => OnCalendarOpened(s));
+        _tracker.Closing += r => _dq.TryEnqueue(() => OnCalendarClosing(r));
         _tracker.Changed += s => _dq.TryEnqueue(() => OnCalendarChanged(s));
         _tracker.Closed += r => _dq.TryEnqueue(() => OnCalendarClosed(r));
         _tracker.Start();
@@ -113,34 +131,75 @@ public sealed class AppController : IDisposable
     }
 
     // ---------------------------------------------------------------- calendar events
+    // Motion follows the calendar card beside it: both slide in from the right
+    // edge together, resize together on expand/collapse (bottom edge fixed),
+    // and slide back out to the right together.
+
+    /// <summary>The calendar is uncloaking with a known layout: start sliding in right away.</summary>
+    private void OnCalendarOpening(CalendarState s)
+    {
+        _reattachCheck.Stop();
+        Attach(s, Motion.Entrance);
+    }
 
     private void OnCalendarOpened(CalendarState s)
     {
-        _calendar = s;
-        _state = PanelState.Attached;
-        PlaceBesideCalendar(s);
-        _panel.ShowPassive(animate: true);
-        StartClock();
+        _reattachCheck.Stop();
+        Attach(s, Motion.Correction);
     }
 
     private void OnCalendarChanged(CalendarState s)
     {
         _calendar = s;
-        if (_state == PanelState.Attached) PlaceBesideCalendar(s);
+        if (_state != PanelState.Attached) return;
+        var (rect, layout) = PlacementBeside(s);
+        bool layoutChange = layout != _panel.Layout || Math.Abs(rect.Height - _panel.Frame.Height) > 24 * s.Monitor.Scale;
+        _panel.MoveTo(rect, layout, layoutChange ? Motion.PointToPoint : Motion.Correction);
+    }
+
+    /// <summary>
+    /// Shows the panel beside the calendar: slides in when it was hidden (or
+    /// sliding out), otherwise moves to the new place.
+    /// </summary>
+    private void Attach(CalendarState s, Motion ifShown)
+    {
+        _calendar = s;
+        var (rect, layout) = PlacementBeside(s);
+        bool visible = _panel.IsShown && !_panel.IsExiting && _state != PanelState.Hidden;
+        _state = PanelState.Attached;
+        if (visible) _panel.MoveTo(rect, layout, ifShown);
+        else _panel.EnterFromRight(rect, layout, CalendarSlide(s), _tracker.OpenStartTick);
+        StartClock();
+    }
+
+    /// <summary>
+    /// The calendar slides in from the right screen edge: its window starts one
+    /// window-width to the right. The panel moves the same distance on the same
+    /// curve so the two travel as one surface.
+    /// </summary>
+    private static int CalendarSlide(CalendarState s) =>
+        Math.Max(1, s.Monitor.Bounds.Right - Math.Min(s.Window.Left, s.Card.Left - (int)Math.Round(12 * s.Monitor.Scale)));
+
+    /// <summary>The calendar lost the foreground and is about to slide out: go with it.</summary>
+    private void OnCalendarClosing(string reason)
+    {
+        if (_state != PanelState.Attached || _panel.IsActive || _panel.IsSearching) return;
+        HidePanel(animate: true);
+        _reattachCheck.Stop();
+        _reattachCheck.Start();
     }
 
     private void OnCalendarClosed(string reason)
     {
-        _calendar = null;
-        if (_state != PanelState.Attached) return;
-        if (_panel.IsActive || _panel.IsSearching)
+        _reattachCheck.Stop();
+        if (_state == PanelState.Attached)
         {
-            // the user clicked into the panel (search, menu): keep it open on its own
-            _state = PanelState.Standalone;
-            return;
+            if (_panel.IsActive || _panel.IsSearching)
+                _state = PanelState.Standalone; // the user is working in the panel (search, menu): keep it open on its own
+            else
+                HidePanel(animate: true);       // clicked elsewhere / Esc / clicked the clock again: close together
         }
-        // clicked elsewhere / Esc / clicked the clock again: close together
-        HidePanel();
+        _calendar = null;
     }
 
     private void OnPanelDeactivated()
@@ -154,10 +213,10 @@ public sealed class AppController : IDisposable
 
     private void HideIfOrphaned()
     {
-        if (_state == PanelState.Standalone && !_panel.IsActive && _tracker.FlyoutWindow == 0) HidePanel();
+        if (_state == PanelState.Standalone && !_panel.IsActive && _tracker.FlyoutWindow == 0) HidePanel(animate: true);
     }
 
-    private void PlaceBesideCalendar(CalendarState s)
+    private (PixelRect Rect, PanelLayout Layout) PlacementBeside(CalendarState s)
     {
         var layout = s.Expanded ? PanelLayout.Expanded : PanelLayout.Compact;
         if (_panel.IsSearching) layout = PanelLayout.Expanded;
@@ -166,7 +225,13 @@ public sealed class AppController : IDisposable
             : Views.CompactView.RequiredHeightFor(_theme.TextScale);
         if (_panel.IsSearching) minHeight = SearchHeight;
         var rect = CalendarGeometry.PanelRect(s, minWidthDip: 320, minHeightDip: (int)Math.Ceiling(minHeight));
-        _panel.Place(rect, layout);
+        return (rect, layout);
+    }
+
+    private void PlaceBesideCalendar(CalendarState s)
+    {
+        var (rect, layout) = PlacementBeside(s);
+        _panel.MoveTo(rect, layout, Motion.PointToPoint);
     }
 
     private const double StandaloneWidth = 360;
@@ -187,37 +252,47 @@ public sealed class AppController : IDisposable
     private void PlaceStandaloneOrAttached()
     {
         if (_state == PanelState.Attached && _calendar is { } cal) PlaceBesideCalendar(cal);
-        else if (_panel.IsShown)
-        {
-            var r = StandaloneRect();
-            _panel.Place(r, PanelLayout.Expanded);
-        }
+        else if (_panel.IsShown) _panel.MoveTo(StandaloneRect(), PanelLayout.Expanded, Motion.PointToPoint);
     }
 
     public void ShowStandalone()
     {
         if (_state == PanelState.Attached) { _panel.ActivateForInput(); _state = PanelState.Standalone; return; }
+        _reattachCheck.Stop();
         _state = PanelState.Standalone;
-        _panel.Place(StandaloneRect(), PanelLayout.Expanded);
-        _panel.ShowActive(animate: true);
+        var rect = StandaloneRect();
+        _panel.EnterFromRight(rect, PanelLayout.Expanded, PanelWindow.OffscreenDistance(rect), activate: true);
         StartClock();
     }
 
     private void ToggleStandalone()
     {
-        if (_state == PanelState.Standalone && _panel.IsShown) HidePanel();
+        if (_state == PanelState.Standalone && _panel.IsShown && !_panel.IsExiting) HidePanel(animate: true);
         else ShowStandalone();
     }
 
-    private void HidePanel()
+    private void HidePanel(bool animate = false)
     {
+        // Beside the calendar the panel travels with it; on its own it leaves the screen.
+        int distance = _state == PanelState.Attached && _calendar is { } cal
+            ? CalendarSlide(cal)
+            : PanelWindow.OffscreenDistance(_panel.Frame);
         _state = PanelState.Hidden;
-        _panel.HidePanel();
         _minuteTimer.Stop();
         _trimTimer.Stop();
         _trimTimer.Start();
-        // Return to "now" next time unless the user is mid-comparison within a minute.
-        _model.ResetToNow();
+        if (animate) _panel.ExitToRight(distance, AfterHidden);
+        else
+        {
+            _panel.HidePanel();
+            AfterHidden();
+        }
+    }
+
+    private void AfterHidden()
+    {
+        // Return to "now" next time.
+        if (_state == PanelState.Hidden) _model.ResetToNow();
     }
 
     // ---------------------------------------------------------------- clock

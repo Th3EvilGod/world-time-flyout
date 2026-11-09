@@ -47,9 +47,30 @@ The Windows 11 notification center and calendar live in one shell window owned b
    button's container chain (`CalendarGeometry.Resolve`); expanded means the month grid is
    on screen.
 3. **Follow it while open.** While the calendar is visible its layout is re-read every
-   120 ms to catch expand/collapse; when it closes, everything stops.
+   33 ms (one cached UIA element refresh) to catch expand/collapse; when it closes,
+   everything stops.
 4. **Place the panel** immediately left of the card, same top/bottom/width, on the card's
-   monitor (`CalendarGeometry.PanelRect`). Compact mode never gets shorter than three rows.
+   monitor (`CalendarGeometry.PanelRect`). Compact mode never gets shorter than the tiles
+   and the strip under them.
+
+### Motion
+
+The panel window itself moves, one `SetWindowPos` per rendered frame (`PanelWindow`,
+`Motion`), using the values from Microsoft's "Motion in Windows 11" guidance:
+
+| What | Curve | Duration |
+|---|---|---|
+| Slide in from the right (with the calendar) | cubic-bezier(0, 0, 0, 1) | 333 ms |
+| Expand / collapse, bottom edge fixed | cubic-bezier(0.55, 0.55, 0, 1) | 250 ms |
+| Slide out to the right, with a fade | cubic-bezier(1, 0, 1, 1) | 167 ms |
+
+The calendar starts its slide when the shell uncloaks its window, so the tracker passes
+that event's timestamp along and the panel's slide is started "in the past" to stay in
+step. When the calendar's window is already known, the panel starts moving at the uncloak
+with the layout the calendar had last time, instead of waiting for the card to be laid
+out. The exit starts as soon as the calendar loses the foreground (it is cloaked only
+after its own exit animation). During expand/collapse both layouts stay laid out at their
+own final heights, pinned to the bottom edge, and cross-fade.
 
 The panel window is `WS_EX_NOACTIVATE` and answers `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`;
 buttons don't take focus on click. So clicking times, paging and dragging the timeline do
@@ -68,10 +89,15 @@ and are computed per zone interval so they behave across DST gaps and overlaps
 (`TimeMath`, covered by tests for New York, Lord Howe, Kathmandu, Kolkata, Adelaide and the
 date line).
 
+Stepping away from "now" starts at the current time rounded to the nearest step (the
+anchor), so steps land on clean times and the shift is shown in whole steps relative to
+the anchor (`TimeSelection.Anchor`, `OffsetFromAnchor`). Day steps and the date picker keep
+the time of day in the reference city.
+
 ## Resource use
 
 - Hidden: no timers, no polling. The only activity is the shell's own window events.
-- Visible: one timer per minute boundary; UIA reads every 120 ms only while the calendar is open.
+- Visible: one timer per minute boundary; UIA refreshes every 33 ms only while the calendar is open.
 - The city catalog (750 KB compressed) is loaded only when search opens.
 - Measured numbers for each build are in the CI summary and in `metrics.md` of each release.
 

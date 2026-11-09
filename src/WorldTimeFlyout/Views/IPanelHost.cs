@@ -18,8 +18,6 @@ public interface IPanelHost
 
     void ShowMoreMenu(FrameworkElement target);
 
-    void ShowDateTimePicker(FrameworkElement target);
-
     void BeginSearch();
 
     void EndSearch();

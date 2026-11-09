@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 Add-Type @"
-using System; using System.Collections.Generic; using System.Runtime.InteropServices; using System.Text;
+using System; using System.Collections.Generic; using System.Diagnostics; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 public static class W {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; public override string ToString() { return string.Format("({0},{1} {2}x{3})", L, T, R - L, B - T); } }
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
@@ -35,6 +35,25 @@ public static class W {
       if (p == pid && Shown(h)) { RECT r = Frame(h); if (r.R - r.L >= minW && r.B - r.T >= minH) { found = h; return false; } }
       return true; }, IntPtr.Zero);
     return found;
+  }
+  // Records the panel's frame every few ms: "t:(L,T WxH)" for each change, "t:hidden" when it goes away.
+  public static List<int[]> Track(uint pid, int ms) {
+    var list = new List<int[]>(); var sw = Stopwatch.StartNew(); RECT last = new RECT(); bool shown = false;
+    while (sw.ElapsedMilliseconds < ms) {
+      IntPtr h = VisibleWindowOf(pid, 150, 40);
+      int t = (int)sw.ElapsedMilliseconds;
+      if (h != IntPtr.Zero) {
+        RECT r = Frame(h);
+        if (!shown || r.L != last.L || r.T != last.T || r.R != last.R || r.B != last.B) { list.Add(new[] { t, r.L, r.T, r.R - r.L, r.B - r.T }); last = r; shown = true; }
+      } else if (shown) { list.Add(new[] { t, -1, -1, -1, -1 }); shown = false; }
+      Thread.Sleep(3);
+    }
+    return list;
+  }
+  public static string Format(List<int[]> l) {
+    var sb = new StringBuilder();
+    foreach (var e in l) sb.Append(e[1] < 0 ? string.Format("{0}ms:hidden ", e[0]) : string.Format("{0}ms:({1},{2} {3}x{4}) ", e[0], e[1], e[2], e[3], e[4]));
+    return sb.ToString();
   }
 }
 "@
@@ -65,6 +84,17 @@ function ExpandButton {
   $AE::FromHandle($h).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
 }
 function Panel { [W]::VisibleWindowOf([uint32]$p.Id, 200, 60) }
+function PanelEl($id) {
+  $h = Panel; if ($h -eq [IntPtr]::Zero) { return $null }
+  $c = New-Object System.Windows.Automation.PropertyCondition($AE::AutomationIdProperty, $id)
+  $AE::FromHandle($h).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
+}
+function ClickEl($e) { $r = $e.Current.BoundingRectangle; [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
+function Motion($label, $track) {
+  $line = "MOTION {0}: {1} steps: {2}" -f $label, $track.Count, [W]::Format($track)
+  $results.Add($line); $line
+}
+$motionLog = New-Object System.Collections.Generic.List[string]
 function CheckAttached($label) {
   Start-Sleep -Milliseconds 700
   $card = Card; $panel = Panel
@@ -87,7 +117,10 @@ Start-Sleep -Seconds 8
 "winver: " + (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion + " " + [Environment]::OSVersion.Version
 
 # 1. Win+N opens the calendar; the panel attaches
-WinN; Start-Sleep -Milliseconds 1500
+WinN
+$track = [W]::Track([uint32]$p.Id, 900)
+Motion 'open (first)' $track
+Start-Sleep -Milliseconds 600
 Check 'Win+N opens calendar' (CalendarOpen) ''
 CheckAttached 'after Win+N'
 Shot '1-open'
@@ -97,12 +130,18 @@ $btn = ExpandButton
 if ($btn) {
   $r = $btn.Current.BoundingRectangle
   [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-  Start-Sleep -Milliseconds 900
+  $track = [W]::Track([uint32]$p.Id, 800)
+  Motion 'expand/collapse' $track
+  $heights = @($track | ForEach-Object { $_[4] } | Sort-Object -Unique)
+  Check 'expand/collapse resizes in steps (animated)' ($heights.Count -ge 4) ("{0} distinct heights" -f $heights.Count)
+  Start-Sleep -Milliseconds 300
   CheckAttached 'after expand/collapse toggle'
   Shot '2-toggled'
   $btn = ExpandButton; $r = $btn.Current.BoundingRectangle
   [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-  Start-Sleep -Milliseconds 900
+  $track = [W]::Track([uint32]$p.Id, 800)
+  Motion 'toggle back' $track
+  Start-Sleep -Milliseconds 300
   CheckAttached 'after toggling back'
   Shot '3-toggled-back'
 } else { Check 'expand button found' $false '' }
@@ -120,8 +159,92 @@ if ($panel -ne [IntPtr]::Zero) {
   Shot '4-after-panel-click'
 }
 
+# 3b. controls in both layouts (the calendar must stay open throughout)
+function SetCalendarExpanded($want) {
+  $isExpanded = (PanelEl 'DateChip') -ne $null
+  if ($isExpanded -ne $want) {
+    $b = ExpandButton; if ($b) { ClickEl $b; Start-Sleep -Milliseconds 900 }
+  }
+  return ((PanelEl 'DateChip') -ne $null) -eq $want
+}
+if (SetCalendarExpanded $true) {
+  $chip = PanelEl 'DateChip'
+  $name0 = $chip.Current.Name
+  "chip: $name0"
+  ClickEl $chip; Start-Sleep -Milliseconds 800
+  $picker = PanelEl 'DatePicker'
+  Check 'date chip opens the date picker' ($picker -ne $null) ''
+  Check 'calendar stays open with the date picker' (CalendarOpen) ''
+  Shot '4a-date-picker'
+  if ($picker) {
+    $days = @($picker.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      (New-Object System.Windows.Automation.PropertyCondition($AE::ClassNameProperty, 'CalendarViewDayItem'))))
+    "day items: $($days.Count)"
+    if ($days.Count -gt 25) {
+      ClickEl $days[24]; Start-Sleep -Milliseconds 800
+      $chip = PanelEl 'DateChip'
+      $name1 = if ($chip) { $chip.Current.Name } else { '' }
+      "chip after picking: $name1"
+      Check 'picking a day sets the date' ($chip -ne $null -and $name1 -ne $name0 -and $name1 -like '*from now*') $name1
+      Shot '4b-date-picked'
+    } else { Check 'date picker shows days' $false "$($days.Count) items" }
+  }
+  $now = PanelEl 'NowButton'; if ($now) { ClickEl $now; Start-Sleep -Milliseconds 500 }
+  $next = PanelEl 'NextDay'
+  if ($next) {
+    ClickEl $next; Start-Sleep -Milliseconds 500
+    $n1 = (PanelEl 'DateChip').Current.Name
+    ClickEl (PanelEl 'NextDay'); Start-Sleep -Milliseconds 500
+    $n2 = (PanelEl 'DateChip').Current.Name
+    ClickEl (PanelEl 'PreviousDay'); Start-Sleep -Milliseconds 500
+    $n3 = (PanelEl 'DateChip').Current.Name
+    Check 'next day steps whole days' ($n1 -like '*+1d*' -and $n2 -like '*+2d*' -and $n3 -like '*+1d*') "$n1 | $n2 | $n3"
+    Shot '4c-next-day'
+    $now = PanelEl 'NowButton'; if ($now) { ClickEl $now; Start-Sleep -Milliseconds 500 }
+  }
+  Check 'calendar still open after the expanded controls' (CalendarOpen) ''
+} else { Check 'calendar expanded for the control tests' $false '' }
+
+if (SetCalendarExpanded $false) {
+  $tile = PanelEl 'Tile0'
+  Check 'compact view shows tiles' ($tile -ne $null) ''
+  Shot '4d-compact'
+  if ($tile) {
+    $t0 = $tile.Current.Name
+    $nextPage = PanelEl 'NextPage'
+    if ($nextPage) {
+      ClickEl $nextPage; Start-Sleep -Milliseconds 600
+      $t1 = (PanelEl 'Tile0').Current.Name
+      Check 'next page shows other cities' ($t1 -ne $t0) "$t0 -> $t1"
+      Shot '4e-compact-next-page'
+      ClickEl (PanelEl 'NextPage'); Start-Sleep -Milliseconds 600
+      $t2 = (PanelEl 'Tile0').Current.Name
+      Check 'paging wraps around to the first cities' ($t2 -eq $t0) "$t2"
+    }
+    $later = PanelEl 'Later'
+    if ($later) {
+      ClickEl $later; Start-Sleep -Milliseconds 500
+      $shift = PanelEl 'ShiftChip'
+      $s1 = if ($shift) { $shift.Current.Name } else { '' }
+      ClickEl (PanelEl 'Earlier'); Start-Sleep -Milliseconds 300
+      ClickEl (PanelEl 'Earlier'); Start-Sleep -Milliseconds 500
+      Shot '4f-compact-earlier'
+      $tile = PanelEl 'Tile0'
+      "tile after steps: $($tile.Current.Name)"
+      Check 'compact steps show the shift' ($shift -ne $null) $s1
+      $shift = PanelEl 'ShiftChip'; if ($shift) { ClickEl $shift; Start-Sleep -Milliseconds 400 }
+      Check 'shift chip returns to now' ((PanelEl 'ShiftChip') -eq $null) ''
+    }
+  }
+  Check 'calendar still open after the compact controls' (CalendarOpen) ''
+  SetCalendarExpanded $true | Out-Null
+} else { Check 'calendar collapsed for the control tests' $false '' }
+
 # 4. Esc closes the calendar and the panel goes with it
-Esc; Start-Sleep -Milliseconds 1200
+Esc
+$track = [W]::Track([uint32]$p.Id, 700)
+Motion 'close (Esc)' $track
+Start-Sleep -Milliseconds 500
 Check 'Esc closes calendar' (-not (CalendarOpen)) ''
 Check 'panel hides with the calendar' ((Panel) -eq [IntPtr]::Zero) ''
 Shot '5-closed'
@@ -139,12 +262,20 @@ if ($tray) {
 if ($clock) {
   $r = $clock.Current.BoundingRectangle
   [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-  Start-Sleep -Milliseconds 1500
+  $track = [W]::Track([uint32]$p.Id, 900)
+  Motion 'open (clock, known layout)' $track
+  $xs = @($track | Where-Object { $_[1] -ge 0 } | ForEach-Object { $_[1] })
+  Check 'panel slides in from the right' ($xs.Count -ge 5 -and ($xs[0] - $xs[-1]) -ge 100) ("{0} positions, x {1} -> {2}" -f $xs.Count, $(if ($xs.Count) { $xs[0] } else { '-' }), $(if ($xs.Count) { $xs[-1] } else { '-' }))
+  Start-Sleep -Milliseconds 600
   Check 'clock click opens calendar' (CalendarOpen) ''
   CheckAttached 'after clock click'
   Shot '6-clock'
   [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-  Start-Sleep -Milliseconds 1500
+  $track = [W]::Track([uint32]$p.Id, 700)
+  Motion 'close (clock)' $track
+  $xs = @($track | Where-Object { $_[1] -ge 0 } | ForEach-Object { $_[1] })
+  Check 'panel slides out to the right' ($xs.Count -ge 3 -and ($xs[-1] - $xs[0]) -ge 50) ("{0} positions" -f $xs.Count)
+  Start-Sleep -Milliseconds 800
   Check 'second clock click closes calendar' (-not (CalendarOpen)) ''
   Check 'panel hides on second clock click' ((Panel) -eq [IntPtr]::Zero) ''
   Shot '7-clock-again'

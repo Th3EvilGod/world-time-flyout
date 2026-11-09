@@ -23,7 +23,7 @@ namespace WorldTime.Shell;
 /// </summary>
 public sealed unsafe class CalendarFlyoutTracker : IDisposable
 {
-    public const uint PollInterval = 100;
+    public const uint PollInterval = 33;
     private const string ShellProcess = "shellexperiencehost.exe";
 
     private static CalendarFlyoutTracker? s_instance;
@@ -43,6 +43,14 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private nuint _timer;
     private int _misses;
     private bool _opening;
+    private bool _announced;          // Opening was raised for the current open
+    private bool _closingRaised;
+    private nint _lastCalendarHwnd;   // the shell keeps the same window across opens
+    private CalendarState? _lastSettled;
+    // Layout the calendar had when it last opened. Windows reopens it the same
+    // way (on 26H2 it reopened expanded even after being collapsed), so this
+    // predicts the next open better than the last settled layout.
+    private CalendarState? _lastOpened;
     // expand/collapse smoothing
     private PixelRect? _lastRawCard;
     private bool? _predictedExpanded;
@@ -51,8 +59,19 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private static bool Same(CalendarState a, CalendarState b) =>
         a.Card == b.Card && a.Expanded == b.Expanded && a.Window == b.Window;
 
+    /// <summary>
+    /// The known calendar window is appearing again: raised the moment it starts
+    /// its slide-in, with the layout it had last time, so the companion can move
+    /// in sync instead of waiting ~150 ms for the card to be laid out.
+    /// </summary>
+    public event Action<CalendarState>? Opening;
     /// <summary>The calendar flyout was opened (or found already open).</summary>
     public event Action<CalendarState>? Opened;
+    /// <summary>
+    /// The foreground moved away from the calendar, so it is starting to close
+    /// (its own exit animation runs before it is cloaked).
+    /// </summary>
+    public event Action<string>? Closing;
     /// <summary>The card moved, resized, expanded or collapsed.</summary>
     public event Action<CalendarState>? Changed;
     /// <summary>The calendar flyout closed; the argument is a short reason for logs.</summary>
@@ -61,6 +80,22 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     public event Action<string>? Log;
 
     public bool UiaAvailable { get; private set; }
+
+    /// <summary>
+    /// When the current calendar window was uncloaked/shown, in
+    /// Environment.TickCount64 milliseconds: its slide-in starts then, so a
+    /// companion animation can be started "in the past" to stay in step.
+    /// </summary>
+    public long OpenStartTick => Volatile.Read(ref _openTick);
+    private long _openTick;
+    private uint _eventTime;
+
+    private static long EventTick(uint eventTime)
+    {
+        long now = Environment.TickCount64;
+        uint age = unchecked((uint)now - eventTime);
+        return eventTime != 0 && age < 5000 ? now - age : now;
+    }
     public CalendarState? Current => Volatile.Read(ref _state);
     public nint FlyoutWindow => Volatile.Read(ref _flyout);
 
@@ -165,7 +200,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     {
         try
         {
-            s_instance?.Handle(ev, hwnd, idObject, idChild);
+            if (s_instance is { } t)
+            {
+                t._eventTime = time;
+                t.Handle(ev, hwnd, idObject, idChild);
+            }
         }
         catch (Exception e)
         {
@@ -188,6 +227,13 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
                 }
                 else if (_flyout != 0)
                 {
+                    // Our own windows are excluded from these events, so this is
+                    // another app (or the taskbar): the calendar is dismissing.
+                    if (!_closingRaised)
+                    {
+                        _closingRaised = true;
+                        Closing?.Invoke("foreground moved");
+                    }
                     Poll("foreground moved");
                 }
                 break;
@@ -213,16 +259,27 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         var rect = Win32Util.WindowRect(hwnd);
         if (rect.Width < 200 || rect.Height < 60) return;
 
+        bool known = hwnd == _lastCalendarHwnd && _lastOpened is not null;
         var state = ReadState(hwnd, fresh: true);
-        if (state is null) return; // some other shell surface, not the calendar
+        if (state is null && !known) return; // some other shell surface, not the calendar
 
         if (_flyout != 0) CloseFlyout("replaced");
+        Volatile.Write(ref _openTick, EventTick(_eventTime));
         Volatile.Write(ref _flyout, hwnd);
         _misses = 0;
+        _closingRaised = false;
         StartTimer();
         Log?.Invoke($"flyout window ({reason}): class={Win32Util.ClassName(hwnd)} {state}");
         _opening = true;
-        TryCompleteOpen(state);
+        _announced = false;
+        if (known)
+        {
+            _announced = true;
+            var predicted = _lastOpened! with { Hwnd = hwnd, Window = rect, Source = "last-open" };
+            Log?.Invoke($"opening (predicted): {predicted}");
+            Opening?.Invoke(predicted);
+        }
+        if (state is not null) TryCompleteOpen(state);
     }
 
     /// <summary>Reports Opened once the card has a usable size (it grows in during the open animation).</summary>
@@ -231,6 +288,9 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         if (state.Card.Height < 60 * state.Monitor.Scale) return;
         _opening = false;
         _lastRawCard = state.Card;
+        _lastCalendarHwnd = state.Hwnd;
+        _lastOpened = state;
+        Remember(state);
         Volatile.Write(ref _state, state);
         Log?.Invoke($"opened: {state}");
         Opened?.Invoke(state);
@@ -248,7 +308,8 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         var state = ReadState(hwnd, fresh: false);
         if (state is null)
         {
-            if (++_misses >= 3) CloseFlyout("calendar no longer found");
+            // while opening the card may take a few reads to appear (~0.5 s max)
+            if (++_misses >= (_opening ? 15 : 3)) CloseFlyout("calendar no longer found");
             return;
         }
         _misses = 0;
@@ -264,7 +325,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         if (moving)
         {
             bool expanding = state.Card.Height > last!.Value.Height;
-            int? target = expanding ? _settledExpandedHeight : _settledCollapsedHeight;
+            // Final height: what it was last time in this state, else the usual
+            // Windows 11 size (corrected when it settles).
+            double s = state.Monitor.Scale;
+            int? target = (expanding ? _settledExpandedHeight : _settledCollapsedHeight)
+                          ?? (int)Math.Round((expanding ? 455 : 100) * s);
             if (target is int h && _predictedExpanded != expanding)
             {
                 _predictedExpanded = expanding;
@@ -282,11 +347,18 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
 
         // settled
         _predictedExpanded = null;
-        if (state.Expanded) _settledExpandedHeight = state.Card.Height;
-        else _settledCollapsedHeight = state.Card.Height;
+        Remember(state);
         var prev = _state;
         if (prev is not null && Same(prev, state)) return;
         Report(state, reason);
+    }
+
+    private void Remember(CalendarState state)
+    {
+        if (state.Expanded) _settledExpandedHeight = state.Card.Height;
+        else _settledCollapsedHeight = state.Card.Height;
+        _lastSettled = state;
+        _lastCalendarHwnd = state.Hwnd;
     }
 
     private void Report(CalendarState state, string reason)
@@ -307,6 +379,12 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             return Win32Util.ClassName(hwnd) == "Windows.UI.Core.CoreWindow"
                 ? CalendarGeometry.FromWindowOnly(hwnd, window, monitor)
                 : null;
+        }
+
+        if (!fresh && _reader.ReadFast(hwnd) is { } fast)
+        {
+            var quick = CalendarGeometry.Resolve(hwnd, window, fast, _lastAncestors, monitor);
+            if (quick is not null) return quick;
         }
 
         var read = _reader.Read(hwnd, withAncestors: false);
@@ -338,12 +416,14 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         Volatile.Write(ref _state, null);
         _lastRawCard = null;
         _predictedExpanded = null;
-        bool wasOpening = _opening;
+        bool wasOpening = _opening, announced = _announced;
         _opening = false;
+        _announced = false;
+        _closingRaised = false;
         _lastAncestors = [];
         _lastKeySignature = "";
         Log?.Invoke($"closed: {reason}");
-        if (!wasOpening) Closed?.Invoke(reason);
+        if (!wasOpening || announced) Closed?.Invoke(reason);
     }
 
     private void StartTimer()
