@@ -3,10 +3,10 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>0.1.0</Version>
-    <Authors>Robert Arabajyan</Authors>
+    <Version>0.2.0</Version>
+    <Authors>Th3EvilGod</Authors>
     <Product>World Time Flyout</Product>
-    <Copyright>Copyright (c) 2026 Robert Arabajyan</Copyright>
+    <Copyright>Copyright (c) 2026 Th3EvilGod</Copyright>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 </Project>

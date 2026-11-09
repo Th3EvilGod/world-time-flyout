@@ -23,6 +23,8 @@ public sealed unsafe class ShellMessageWindow : IDisposable
     public const string WindowClass = "WorldTimeFlyout.MessageWindow";
     private const uint WM_TRAY = PInvoke.WM_APP + 1;
     private const uint WM_SHOW_REQUEST = PInvoke.WM_APP + 2;
+    /// <summary>Asks the app to exit (the installer and --exit send it). Keep the value: installers rely on it.</summary>
+    public const uint WM_EXIT_REQUEST = PInvoke.WM_APP + 3;
 
     private static ShellMessageWindow? s_instance;
     private static uint s_taskbarCreated;
@@ -44,6 +46,8 @@ public sealed unsafe class ShellMessageWindow : IDisposable
     public event Action? DisplayChanged;
     /// <summary>Another instance asked us to open the panel.</summary>
     public event Action? ShowRequested;
+    /// <summary>The installer (or --exit) asked us to quit.</summary>
+    public event Action? ExitRequested;
 
     public void Create()
     {
@@ -75,6 +79,64 @@ public sealed unsafe class ShellMessageWindow : IDisposable
             if (other.IsNull) return false;
             PInvoke.PostMessage(other, WM_SHOW_REQUEST, 0, 0);
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Closes a running instance: asks it to exit, waits, then ends the process
+    /// if it is still there (older versions don't know the request). Returns
+    /// what happened, for the log.
+    /// </summary>
+    public static string CloseExistingInstance(TimeSpan timeout)
+    {
+        static HWND Find()
+        {
+            fixed (char* cls = WindowClass) return PInvoke.FindWindow(cls, null);
+        }
+        var other = Find();
+        if (other.IsNull)
+        {
+            // A copy may still be starting (no window yet): give it a moment, then end it.
+            var starting = System.Diagnostics.Process.GetProcessesByName("WorldTimeFlyout")
+                .Where(p => p.Id != Environment.ProcessId).ToList();
+            if (starting.Count == 0) return "none running";
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (other.IsNull && waited.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                Thread.Sleep(100);
+                other = Find();
+            }
+            if (other.IsNull)
+            {
+                foreach (var p in starting)
+                {
+                    try { p.Kill(); p.WaitForExit(TimeSpan.FromSeconds(5)); } catch { }
+                    p.Dispose();
+                }
+                return $"{starting.Count} starting copy(ies) without a window, ended";
+            }
+            foreach (var p in starting) p.Dispose();
+        }
+        uint pid = 0;
+        PInvoke.GetWindowThreadProcessId(other, &pid);
+        bool posted = PInvoke.PostMessage(other, WM_EXIT_REQUEST, 0, 0);
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)pid);
+            if (process.WaitForExit(timeout)) return $"pid {pid} exited (posted={posted})";
+            if (!string.Equals(process.ProcessName, "WorldTimeFlyout", StringComparison.OrdinalIgnoreCase))
+                return $"pid {pid} is {process.ProcessName}, left alone";
+            process.Kill();
+            process.WaitForExit(TimeSpan.FromSeconds(5));
+            return $"pid {pid} did not exit (posted={posted}), ended it";
+        }
+        catch (ArgumentException)
+        {
+            return $"pid {pid} already gone";
+        }
+        catch (Exception e)
+        {
+            return $"pid {pid}: {e.GetType().Name} {e.Message}";
         }
     }
 
@@ -177,6 +239,7 @@ public sealed unsafe class ShellMessageWindow : IDisposable
             return true;
         }
         if (msg == WM_SHOW_REQUEST) { ShowRequested?.Invoke(); return true; }
+        if (msg == WM_EXIT_REQUEST) { ExitRequested?.Invoke(); return true; }
         if (msg == s_taskbarCreated && s_taskbarCreated != 0)
         {
             // Explorer restarted: the tray icon is gone, add it again.

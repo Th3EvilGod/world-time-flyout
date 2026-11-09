@@ -48,6 +48,21 @@ public sealed class ScreenshotRunner(AppController controller, string dir)
             await Shot("compact-dark-red", true, red, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
             await Shot("compact-light", false, blue, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
 
+            // update messages (no network: previewed states)
+            var up = controller.Updater;
+            var next = new AppVersion(up.Current.Major, up.Current.Minor + 1, 0);
+            var asset = new ReleaseAsset(UpdateFeed.InstallerName(next), "https://example.invalid/setup.exe", 30_000_000);
+            var offer = new UpdateOffer(next, UpdateFeed.ReleasePage(next), asset, asset with { Name = asset.Name + ".sha256" });
+            up.Preview(UpdateStatus.Available, offer, manual: false);
+            await Shot("update-available-dark-red", true, red, PanelLayout.Expanded, 336, 455);
+            up.Preview(UpdateStatus.Downloading, offer, progress: 0.42);
+            await Shot("update-downloading-light", false, blue, PanelLayout.Expanded, 336, 455);
+            up.Preview(UpdateStatus.Failed, error: "Couldn't reach GitHub. Check the internet connection.");
+            await Shot("update-error-dark-red", true, red, PanelLayout.Expanded, 336, 455);
+            up.Preview(UpdateStatus.Idle, updatedFrom: new AppVersion(0, 1, 0));
+            await Shot("updated-light", false, blue, PanelLayout.Expanded, 336, 455);
+            up.Preview(UpdateStatus.Idle, manual: false);
+
             model.StepDays(1);
             await Shot("expanded-next-day-dark-red", true, red, PanelLayout.Expanded, 336, 455);
             model.ResetToNow();

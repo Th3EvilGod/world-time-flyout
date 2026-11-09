@@ -1,6 +1,10 @@
 namespace WorldTimeFlyout;
 
-/// <summary>Command line: --background, --show, --diag, --screenshot DIR, --settings FILE, --fixed-time ISO.</summary>
+/// <summary>
+/// Command line: --background, --show, --exit (close the running instance), --diag,
+/// --no-update-check. For tests: --screenshot DIR, --settings FILE, --fixed-time ISO,
+/// --update-feed URL (loopback only), --update-now, --pretend-version X.
+/// </summary>
 public sealed record AppOptions
 {
     public bool Background { get; init; }
@@ -10,6 +14,11 @@ public sealed record AppOptions
     public bool Screenshot => ScreenshotDir is not null;
     public string? SettingsPath { get; init; }
     public string? FixedTime { get; init; }
+    public bool Exit { get; init; }
+    public bool NoUpdateCheck { get; init; }
+    public string? UpdateFeed { get; init; }
+    public bool UpdateNow { get; init; }
+    public string? PretendVersion { get; init; }
 
     public static AppOptions Parse(string[] args)
     {
@@ -26,6 +35,11 @@ public sealed record AppOptions
                 case "--screenshot" when next is not null: o = o with { ScreenshotDir = next }; i++; break;
                 case "--settings" when next is not null: o = o with { SettingsPath = next }; i++; break;
                 case "--fixed-time" when next is not null: o = o with { FixedTime = next }; i++; break;
+                case "--exit": o = o with { Exit = true }; break;
+                case "--no-update-check": o = o with { NoUpdateCheck = true }; break;
+                case "--update-feed" when next is not null: o = o with { UpdateFeed = next }; i++; break;
+                case "--update-now": o = o with { UpdateNow = true }; break;
+                case "--pretend-version" when next is not null: o = o with { PretendVersion = next }; i++; break;
             }
         }
         return o;

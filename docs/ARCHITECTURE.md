@@ -106,3 +106,22 @@ the time of day in the reference city.
 `%LOCALAPPDATA%\WorldTimeFlyout\settings.json` (atomic writes; repaired or reset if
 hand-edited badly). `log.txt` in the same folder records errors; create `diag.on` there (or
 start with `--diag`) to also log calendar tracking details.
+
+## Installer and updates
+
+The installer is Inno Setup (`installer/WorldTimeFlyout.iss`): per-user, no admin, into
+`%LOCALAPPDATA%\Programs\World Time Flyout`, with a Start menu entry and an Installed apps
+entry. Before copying files it asks a running copy to exit (`WM_APP+3` to the
+`WorldTimeFlyout.MessageWindow` window; `--exit` does the same) and then makes sure with
+`taskkill`, since older versions don't know the request. A silent install starts the app in
+the background; uninstall removes the "Start with Windows" entry if it points at the
+installed copy and, when not silent, offers to delete the settings.
+
+`Updater` reads `releases/latest` from the GitHub REST API once a day (90 s after start at
+the earliest; 6 h after a failure). `UpdateFeed.Choose` (pure, unit-tested) accepts only a
+newer, non-draft, non-pre-release version that has both
+`WorldTimeFlyout-Setup-<version>-win-x64.exe` and its `.sha256` over HTTPS. Install
+downloads both, hashes the installer while downloading, refuses a mismatch, then runs the
+installer with `/VERYSILENT` and exits so the files can be replaced. Test hooks:
+`--update-feed URL` (loopback only), `--pretend-version X`, `--update-now`; CI uses them
+to run a real over-the-air update against a local copy of a release, plus a tampered one.

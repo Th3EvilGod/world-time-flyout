@@ -162,7 +162,7 @@ for ($i = 0; $i -lt 30 -and -not (CalendarOpen); $i++) { Start-Sleep -Millisecon
 Esc; Start-Sleep -Milliseconds 1500
 if (CalendarOpen) { WinN; Start-Sleep -Milliseconds 1500 }
 
-$p = Start-Process $exe -ArgumentList '--background', '--diag', '--settings', $settings -PassThru
+$p = Start-Process $exe -ArgumentList '--background', '--diag', '--no-update-check', '--settings', $settings -PassThru
 Start-Sleep -Seconds 8
 "winver: " + (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion + " " + [Environment]::OSVersion.Version
 

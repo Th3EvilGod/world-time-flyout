@@ -9,3 +9,5 @@ World Time Flyout includes or uses the following:
 - **Windows App SDK / WinUI 3**. MIT License. https://github.com/microsoft/WindowsAppSDK
 - **C#/Win32 (CsWin32)** source generator. MIT License. https://github.com/microsoft/CsWin32
 - **.NET runtime** (compiled in via NativeAOT). MIT License. https://github.com/dotnet/runtime
+- **Inno Setup** builds the installer (its setup and uninstall programs are Inno Setup's).
+  Inno Setup License. https://jrsoftware.org/isinfo.php

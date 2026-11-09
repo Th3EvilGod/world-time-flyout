@@ -14,7 +14,7 @@ $exeMB = (Get-Item $exe).Length / 1MB
 $dirMB = ((Get-ChildItem $AppDir -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB
 $files = (Get-ChildItem $AppDir -Recurse -File).Count
 
-$p = Start-Process $exe -ArgumentList '--background', '--settings', $settings -PassThru
+$p = Start-Process $exe -ArgumentList '--background', '--no-update-check', '--settings', $settings -PassThru
 Start-Sleep -Seconds 20
 $p.Refresh()
 $cpu1 = $p.TotalProcessorTime.TotalMilliseconds

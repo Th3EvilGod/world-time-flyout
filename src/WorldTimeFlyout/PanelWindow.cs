@@ -433,6 +433,14 @@ public sealed partial class PanelWindow : Window, IPanelHost
 
     public void ShowWelcome(bool show) => _expanded.ShowWelcome(show);
 
+    private Updater? _updater;
+
+    public void AttachUpdater(Updater updater)
+    {
+        _updater = updater;
+        _expanded.UpdateBar.Attach(updater);
+    }
+
     public void OpenDatePicker()
     {
         SetLayout(PanelLayout.Expanded);
@@ -563,6 +571,17 @@ public sealed partial class PanelWindow : Window, IPanelHost
         tray.Click += (_, _) => { Model.SetFlag(x => x.ShowTrayIcon = tray.IsChecked); PreferencesChanged?.Invoke(); };
         menu.Items.Add(tray);
         menu.Items.Add(new MenuFlyoutSeparator());
+        if (_updater is { } updater)
+        {
+            if (updater.Status == UpdateStatus.Available && updater.Offer is { } offer)
+                menu.Items.Add(Item($"Install version {offer.Version}", Glyph.Download, () => _ = updater.InstallAsync()));
+            else
+                menu.Items.Add(Item("Check for updates", Glyph.Download, () => _ = updater.CheckAsync(manual: true)));
+            var auto = new ToggleMenuFlyoutItem { Text = "Check for updates daily", IsChecked = s.CheckForUpdates };
+            auto.Click += (_, _) => { Model.SetFlag(x => x.CheckForUpdates = auto.IsChecked); updater.Schedule(); };
+            menu.Items.Add(auto);
+            menu.Items.Add(new MenuFlyoutSeparator());
+        }
         var about = new MenuFlyoutItem
         {
             Text = $"Version {typeof(PanelWindow).Assembly.GetName().Version?.ToString(3)} · tz {Zones.TzdbVersion}",
