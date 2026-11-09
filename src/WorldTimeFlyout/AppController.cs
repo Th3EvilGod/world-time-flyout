@@ -24,6 +24,7 @@ public sealed class AppController : IDisposable
     private readonly ThemeManager _theme;
     private readonly AppModel _model;
     private readonly PanelWindow _panel;
+    private readonly Updater _updater;
     private readonly CalendarFlyoutTracker _tracker = new();
     private readonly ShellMessageWindow _messages = new();
     private readonly DispatcherQueueTimer _minuteTimer;
@@ -60,6 +61,15 @@ public sealed class AppController : IDisposable
         _panel.ExitRequested += () => Application.Current.Exit();
         _panel.PreferencesChanged += ApplyPreferences;
 
+        _updater = new Updater(_model, _dq, options);
+        _updater.ExitForInstall += () =>
+        {
+            // the installer is waiting for our files: save and quit now
+            _model.SaveNow();
+            Application.Current.Exit();
+        };
+        _panel.AttachUpdater(_updater);
+
         _minuteTimer = _dq.CreateTimer();
         _minuteTimer.IsRepeating = false;
         _minuteTimer.Tick += (_, _) => { _model.Tick(); ScheduleMinuteTick(); };
@@ -91,6 +101,7 @@ public sealed class AppController : IDisposable
 
     public bool FirstRun { get; }
     public PanelWindow Panel => _panel;
+    public Updater Updater => _updater;
     public AppModel Model => _model;
     public ThemeManager Theme => _theme;
 
@@ -98,6 +109,12 @@ public sealed class AppController : IDisposable
     {
         _messages.Create();
         _messages.ShowRequested += () => ShowStandalone();
+        _messages.ExitRequested += () =>
+        {
+            DiagLog.Write("exit requested (installer or --exit)");
+            _model.SaveNow();
+            Application.Current.Exit();
+        };
         _messages.TrayActivated += (_, _) => ToggleStandalone();
         _messages.TrayContextMenu += (_, _) => ShowTrayMenu();
         _messages.SettingChanged += area =>
@@ -120,6 +137,8 @@ public sealed class AppController : IDisposable
                       $"system zone {Zones.SystemZoneId()}");
 
         _trimTimer.Start(); // after startup work is done, if nothing gets shown
+        _updater.Schedule();
+        if (_options.UpdateNow) _ = _updater.CheckAndInstallNowAsync();
         if (FirstRun && !_options.Background)
         {
             _panel.ShowWelcome(true);
@@ -343,6 +362,9 @@ public sealed class AppController : IDisposable
             new TrayMenuItem(1, "Open World Time"),
             TrayMenuItem.Line,
             new TrayMenuItem(2, "Start with Windows", s.StartWithWindows),
+            _updater.Status == UpdateStatus.Available && _updater.Offer is { } offer
+                ? new TrayMenuItem(5, $"Install version {offer.Version}")
+                : new TrayMenuItem(4, "Check for updates"),
             new TrayMenuItem(3, "Open log folder"),
             TrayMenuItem.Line,
             new TrayMenuItem(9, "Exit"),
@@ -351,6 +373,8 @@ public sealed class AppController : IDisposable
         {
             case 1: ShowStandalone(); break;
             case 2: _model.SetFlag(x => x.StartWithWindows = !x.StartWithWindows); ApplyPreferences(); break;
+            case 4: ShowStandalone(); _ = _updater.CheckAsync(manual: true); break;
+            case 5: ShowStandalone(); _ = _updater.InstallAsync(); break;
             case 3:
                 try { System.Diagnostics.Process.Start("explorer.exe", SettingsStore.DefaultDirectory); } catch { }
                 break;

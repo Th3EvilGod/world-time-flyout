@@ -31,6 +31,7 @@ public static class Glyph
     public const string Settings = "";
     public const string Globe = "";
     public const string Back = "";
+    public const string Download = "\uE896";
 }
 
 /// <summary>Builders for the small set of visuals the panel uses.</summary>

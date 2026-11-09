@@ -15,6 +15,13 @@ public static class Program
         DiagLog.Init(options.Diagnostics);
         DiagLog.Detail($"launch: {string.Join(' ', args)}");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => DiagLog.Write($"fatal (domain): {e.ExceptionObject}");
+        if (options.Exit)
+        {
+            // Installer / scripts: close the running instance (politely, then by force).
+            bool closed = ShellMessageWindow.CloseExistingInstance(TimeSpan.FromSeconds(8));
+            DiagLog.Write($"--exit: {(closed ? "closed the running instance" : "nothing to close")}");
+            return 0;
+        }
         if (!options.Screenshot)
         {
             s_instance = new Mutex(true, @"Local\WorldTimeFlyout.SingleInstance", out bool created);

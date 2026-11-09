@@ -23,6 +23,8 @@ public sealed unsafe class ShellMessageWindow : IDisposable
     public const string WindowClass = "WorldTimeFlyout.MessageWindow";
     private const uint WM_TRAY = PInvoke.WM_APP + 1;
     private const uint WM_SHOW_REQUEST = PInvoke.WM_APP + 2;
+    /// <summary>Asks the app to exit (the installer and --exit send it). Keep the value: installers rely on it.</summary>
+    public const uint WM_EXIT_REQUEST = PInvoke.WM_APP + 3;
 
     private static ShellMessageWindow? s_instance;
     private static uint s_taskbarCreated;
@@ -44,6 +46,8 @@ public sealed unsafe class ShellMessageWindow : IDisposable
     public event Action? DisplayChanged;
     /// <summary>Another instance asked us to open the panel.</summary>
     public event Action? ShowRequested;
+    /// <summary>The installer (or --exit) asked us to quit.</summary>
+    public event Action? ExitRequested;
 
     public void Create()
     {
@@ -76,6 +80,36 @@ public sealed unsafe class ShellMessageWindow : IDisposable
             PInvoke.PostMessage(other, WM_SHOW_REQUEST, 0, 0);
             return true;
         }
+    }
+
+    /// <summary>
+    /// Closes a running instance: asks it to exit, waits, then ends the process
+    /// if it is still there (older versions don't know the request). Returns
+    /// false when none was running.
+    /// </summary>
+    public static bool CloseExistingInstance(TimeSpan timeout)
+    {
+        HWND other;
+        fixed (char* cls = WindowClass) other = PInvoke.FindWindow(cls, null);
+        if (other.IsNull) return false;
+        uint pid = 0;
+        PInvoke.GetWindowThreadProcessId(other, &pid);
+        PInvoke.PostMessage(other, WM_EXIT_REQUEST, 0, 0);
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)pid);
+            if (!process.WaitForExit(timeout) &&
+                string.Equals(process.ProcessName, "WorldTimeFlyout", StringComparison.OrdinalIgnoreCase))
+            {
+                process.Kill();
+                process.WaitForExit(TimeSpan.FromSeconds(5));
+            }
+        }
+        catch (ArgumentException)
+        {
+            // already gone
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------- tray icon
@@ -177,6 +211,7 @@ public sealed unsafe class ShellMessageWindow : IDisposable
             return true;
         }
         if (msg == WM_SHOW_REQUEST) { ShowRequested?.Invoke(); return true; }
+        if (msg == WM_EXIT_REQUEST) { ExitRequested?.Invoke(); return true; }
         if (msg == s_taskbarCreated && s_taskbarCreated != 0)
         {
             // Explorer restarted: the tray icon is gone, add it again.

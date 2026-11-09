@@ -8,8 +8,9 @@ color. It follows the calendar when you expand or collapse it and slides out wit
 
 ![Compact view beside the collapsed calendar](docs/images/compact.png)
 
-**Download:** the latest `WorldTimeFlyout-<version>-win-x64.zip` from
-[Releases](../../releases/latest). Windows 11 x64, nothing else to install.
+**Download:** `WorldTimeFlyout-Setup-<version>-win-x64.exe` from
+[Releases](../../releases/latest). Windows 11 x64, no admin rights needed. After that it
+updates itself.
 
 ## What it does
 
@@ -29,8 +30,11 @@ color. It follows the calendar when you expand or collapse it and slides out wit
 - **Feels like Windows 11**: follows light/dark mode, accent color, contrast themes,
   text size and the animation setting, live. Motion uses Microsoft's Windows 11 values
   (333 ms slide in, 250 ms resize, 167 ms slide out).
-- **Light and private**: no network access, no telemetry, no admin rights, nothing
-  injected into Explorer. About 1 MB of RAM while hidden and no CPU while idle.
+- **Updates itself**: checks GitHub once a day and installs a new version when you click
+  Install (or turn the check off).
+- **Light and private**: no telemetry, no admin rights, nothing injected into Explorer;
+  the daily update check is its only network connection. About 1 MB of RAM while hidden
+  and no CPU while idle.
 
 ## Using it
 
@@ -54,22 +58,28 @@ differences are measured from.
 
 ## Install
 
-1. Download `WorldTimeFlyout-<version>-win-x64.zip` from [Releases](../../releases/latest).
-2. Optional: check it. `Get-FileHash .\WorldTimeFlyout-*.zip -Algorithm SHA256` must
-   match the hash in the release notes and the `.sha256` file.
-3. Extract it anywhere you keep apps, for example
-   `%LOCALAPPDATA%\Programs\WorldTimeFlyout`, and run `WorldTimeFlyout.exe`.
-   The exe is not code-signed, so SmartScreen may ask once ("More info", then
-   "Run anyway").
+1. Download `WorldTimeFlyout-Setup-<version>-win-x64.exe` from
+   [Releases](../../releases/latest) and run it. It installs for your user only (no
+   admin) into `%LOCALAPPDATA%\Programs\World Time Flyout` and adds a Start menu entry.
+2. The installer is not code-signed yet, so the first time SmartScreen may say "Windows
+   protected your PC": choose "More info", then "Run anyway".
+3. Optional: check the download first. `Get-FileHash .\WorldTimeFlyout-Setup-*.exe -Algorithm SHA256`
+   must match the hash in the release notes and the `.sha256` file.
 
-It starts with Windows (per user, no admin). Turn that off in the **⋯** menu or the tray
-icon menu.
+It starts with Windows (per user). Turn that off in the **⋯** menu or the tray icon menu.
 
-**Update:** Exit from the tray icon, extract the new version over the old folder, start
-it again. Settings are kept.
+**Updates:** once a day the app looks for a new release on GitHub. When there is one,
+the panel shows "Update available" with an **Install** button (also in the **⋯** menu and
+the tray icon menu). It downloads the new installer, checks its SHA-256 against the one
+published with the release, installs it silently and restarts. Check by hand with
+**⋯** → Check for updates; turn the daily check off with **⋯** → Check for updates daily.
 
-**Uninstall:** turn off "Start with Windows" in the **⋯** menu, choose Exit, delete the
-app folder, and optionally `%LOCALAPPDATA%\WorldTimeFlyout` (settings and log).
+**Uninstall:** Settings → Apps → Installed apps → World Time Flyout → Uninstall. It asks
+whether to delete your cities and settings too.
+
+**Portable:** each release also has a `.zip`. Extract it anywhere and run
+`WorldTimeFlyout.exe`. If it installs an update, it installs the regular version and
+switches to it.
 
 ## Requirements
 
@@ -78,9 +88,12 @@ app folder, and optionally `%LOCALAPPDATA%\WorldTimeFlyout` (settings and log).
 
 ## Privacy
 
-The app makes no network connections and collects nothing. Your cities and preferences
-are saved in `%LOCALAPPDATA%\WorldTimeFlyout\settings.json`. A small log is kept next to
-it (more detail when started with `--diag`).
+The app collects nothing. Its only network connection is the update check: once a day
+(or when you ask) it reads the latest release from GitHub's public API, sending nothing
+but the app's version, and downloads an installer only when you click Install. Turn the
+daily check off in the **⋯** menu. Your cities and preferences are saved in
+`%LOCALAPPDATA%\WorldTimeFlyout\settings.json`. A small log is kept next to it (more
+detail when started with `--diag`).
 
 ## How it works
 
@@ -94,11 +107,13 @@ clicked, so the calendar stays open while you use it. Details:
 
 Builds run on GitHub Actions ([ci.yml](.github/workflows/ci.yml)) on Windows: unit tests,
 a NativeAOT self-contained publish, screenshots rendered by the app, an end-to-end test
-against the real taskbar calendar, measured size/memory/CPU, and a zip with its SHA-256.
+against the real taskbar calendar, measured size/memory/CPU, the installer and the zip
+with their SHA-256.
 
 To publish a release: Actions → Build → Run workflow on `main`, enter the version (for
-example `0.2.0`). It builds, tests and publishes the release with the zip, checksum and
-the notes from [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md). Pushing a `v*` tag does the
+example `0.3.0`). It builds, tests and publishes the release with the installer, the
+zip, their checksums and the notes from [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md).
+Bump `<Version>` in `Directory.Build.props` first so builds in between carry it. Pushing a `v*` tag does the
 same. Versions with a hyphen (`0.2.0-beta.1`) become pre-releases.
 
 Locally on Windows with the .NET 10 SDK:
@@ -106,8 +121,13 @@ Locally on Windows with the .NET 10 SDK:
     dotnet test --project tests/WorldTime.Core.Tests
     dotnet publish src/WorldTimeFlyout -c Release -r win-x64 -o publish
 
-Command-line options: `--background` (start hidden), `--show`, `--diag` (verbose log in
+Command-line options: `--background` (start hidden), `--show`, `--exit` (close the
+running copy), `--no-update-check`, `--diag` (verbose log in
 `%LOCALAPPDATA%\WorldTimeFlyout\log.txt`), `--settings FILE`.
+
+The installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php) from
+[installer/WorldTimeFlyout.iss](installer/WorldTimeFlyout.iss). CI installs it, updates
+it over the air from a local copy of a release, and uninstalls it on every build.
 
 ## Known limits
 

@@ -41,7 +41,7 @@ jobs:
         env:
           RELEASE_INPUT: ${{ github.event.inputs.release }}
         run: |
-          $v = '0.1.0'
+          $v = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
           $release = ''
           if ($env:GITHUB_REF -like 'refs/tags/v*') { $v = $env:GITHUB_REF_NAME.TrimStart('v'); $release = $env:GITHUB_REF_NAME }
           $asked = "$env:RELEASE_INPUT".Trim().TrimStart('v')
@@ -113,10 +113,35 @@ jobs:
           "name=$name" >> $env:GITHUB_OUTPUT
           "zip: $('{0:N1}' -f ((Get-Item "$name.zip").Length / 1MB)) MB  sha256: $hash" >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Installer (Inno Setup)
+        id: setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          $v = '${{ steps.ver.outputs.version }}'
+          & $iscc /Qp "/DAppVersion=$v" "/DVersionNumeric=$($v.Split('-')[0])" "/DSourceDir=$pwd\publish\WorldTimeFlyout" "/DOutputDir=$pwd" installer\WorldTimeFlyout.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          $name = "WorldTimeFlyout-Setup-$v-win-x64.exe"
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Set-Content "$name.sha256" -Encoding ascii
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "installer: $('{0:N1}' -f ((Get-Item $name).Length / 1MB)) MB  sha256: $hash" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Install, update and uninstall (end to end)
+        shell: powershell
+        run: |
+          ./tools/installer-test.ps1 -Setup '${{ steps.setup.outputs.name }}' -Version '${{ steps.ver.outputs.version }}' -OutDir installer-test
+          "### Installer and updater" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          Get-Content installer-test/results.txt | ForEach-Object { "- $_" } | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          if (Select-String -Path installer-test/results.txt -Pattern '^FAIL') { throw 'installer test failed' }
+
       - uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.pkg.outputs.name }}
           path: |
+            ${{ steps.setup.outputs.name }}
+            ${{ steps.setup.outputs.name }}.sha256
             ${{ steps.pkg.outputs.name }}.zip
             ${{ steps.pkg.outputs.name }}.zip.sha256
             metrics.md
@@ -128,15 +153,18 @@ jobs:
           path: |
             screenshots/
             integration/
+            installer-test/
 
       - name: Release notes
         shell: pwsh
         run: |
           $n = '${{ steps.pkg.outputs.name }}'
-          $hash = (Get-Content "$n.zip.sha256").Split(' ')[0]
-          $fence = '```'; $tick = '`'
+          $s = '${{ steps.setup.outputs.name }}'
+          $zipHash = (Get-Content "$n.zip.sha256").Split(' ')[0]
+          $setupHash = (Get-Content "$s.sha256").Split(' ')[0]
+          $fence = '```'
           $notes = (Get-Content docs/RELEASE_NOTES.md -Raw).TrimEnd() +
-            "`n`n**SHA-256** of ${tick}$n.zip${tick}:`n`n$fence`n$hash`n$fence`n"
+            "`n`n**SHA-256**`n`n$fence`n$setupHash  $s`n$zipHash  $n.zip`n$fence`n"
           Set-Content release-notes.md $notes -Encoding utf8
           "### Release notes (as they would be published)" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
           $notes | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
@@ -152,6 +180,7 @@ jobs:
           # 1.2.3-beta style versions are pre-releases; plain 1.2.3 is the latest release.
           $kind = if ($tag -like '*-*') { '--prerelease' } else { '--latest' }
           # Creates the tag on the built commit when it does not exist yet (Run workflow).
-          gh release create $tag "$n.zip" "$n.zip.sha256" metrics.md `
+          $s = '${{ steps.setup.outputs.name }}'
+          gh release create $tag $s "$s.sha256" "$n.zip" "$n.zip.sha256" metrics.md `
             $kind --target $env:GITHUB_SHA --title "World Time Flyout $tag" `
             --notes-file release-notes.md

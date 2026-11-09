@@ -19,6 +19,7 @@ public sealed partial class ExpandedView : Grid
     private readonly Button _copyAll, _add, _more;
     private readonly FontIcon _copyIcon;
     private readonly InfoBar _welcome;
+    public UpdateBar UpdateBar { get; }
     private readonly ScrollViewer _scroll;
     private readonly StackPanel _list;
     private readonly StackPanel _empty;
@@ -73,7 +74,11 @@ public sealed partial class ExpandedView : Grid
             Margin = new Thickness(8, 0, 8, 6),
         };
         _welcome.Closed += (_, _) => _host.Model.SetFlag(s => s.WelcomeShown = true);
-        Children.Add(_welcome.At(1));
+        UpdateBar = new UpdateBar(host.Model);
+        var notices = new StackPanel();
+        notices.Children.Add(UpdateBar);
+        notices.Children.Add(_welcome);
+        Children.Add(notices.At(1));
 
         // list
         _list = new StackPanel { Spacing = 2, Padding = new Thickness(4, 0, 4, 4) };
@@ -240,7 +245,7 @@ public sealed partial class ExpandedView : Grid
         var rest = on ? Visibility.Collapsed : Visibility.Visible;
         if (on) CloseDatePicker();
         foreach (var child in Children)
-            if (child != _search && child != _welcome && child != _empty && child != _datePage) ((UIElement)child).Visibility = rest;
+            if (child != _search && child != _empty && child != _datePage) ((UIElement)child).Visibility = rest;
         if (on) _search.Open();
         else
         {

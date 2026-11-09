@@ -15,6 +15,13 @@ public sealed class AppSettings
     public bool StartWithWindows { get; set; } = true;
     public bool ShowTrayIcon { get; set; } = true;
     public bool WelcomeShown { get; set; }
+    /// <summary>Look for a new version on GitHub once a day (install only on request).</summary>
+    public bool CheckForUpdates { get; set; } = true;
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+    /// <summary>A version whose "update available" bar was closed: not shown again in the panel.</summary>
+    public string? DismissedUpdate { get; set; }
+    /// <summary>The version that last ran, to say "Updated to ..." once after an update.</summary>
+    public string? LastRunVersion { get; set; }
 
     public SavedLocation? Reference =>
         Locations.FirstOrDefault(l => l.Id == ReferenceId) ?? Locations.FirstOrDefault();
