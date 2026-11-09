@@ -161,14 +161,17 @@ public sealed partial class PanelWindow : Window, IPanelHost
             Show(activate);
             return;
         }
-        if (!wasShown)
+        if (wasShown)
         {
-            _rect = Shift(target, distance);
-            ApplyBounds();
+            // It was sliding out: turn around from where it is.
+            RunMotion(target, Motion.Entrance, null);
+            return;
         }
+        _rect = Shift(target, distance);
+        ApplyBounds();
+        // First step before showing, so a late start does not flash the start position.
+        RunMotion(target, Motion.Entrance, null, startTick);
         Show(activate);
-        // Already on screen (it was sliding out): turn around from where it is.
-        RunMotion(target, Motion.Entrance, null, wasShown ? null : startTick);
     }
 
     /// <summary>

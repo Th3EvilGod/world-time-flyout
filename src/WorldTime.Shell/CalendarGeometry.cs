@@ -17,14 +17,19 @@ public readonly record struct UiNode(
     public bool IsCalendarGrid => ControlType == CalendarControlType || ClassName == "CalendarView";
 }
 
-/// <summary>Where the native calendar card is and whether its month grid is showing.</summary>
+/// <summary>
+/// Where the native calendar card is and whether its month grid is showing.
+/// <see cref="Card"/> is where the card settles; <see cref="SlideOffset"/> is how far
+/// right of that it is drawn right now (non-zero while it slides in or out).
+/// </summary>
 public sealed record CalendarState(
     nint Hwnd,
     PixelRect Window,
     PixelRect Card,
     bool Expanded,
     MonitorInfo Monitor,
-    string Source)
+    string Source,
+    int SlideOffset = 0)
 {
     public override string ToString() =>
         $"card={Card} window={Window} expanded={Expanded} dpi={Monitor.Dpi} via {Source}";
@@ -64,8 +69,13 @@ public static class CalendarGeometry
             int margin = (int)Math.Round(12 * s);
             int finalLeft = window.Left + margin, finalRight = window.Right - margin;
             bool column = finalRight - finalLeft > 200 * s && window.Width < 520 * s;
-            if (column) r = r with { Left = finalLeft, Right = finalRight };
-            return new CalendarState(hwnd, window, r, expanded, monitor, "uia-card");
+            int slide = 0;
+            if (column)
+            {
+                slide = Math.Max(0, r.Left - finalLeft);
+                r = r with { Left = finalLeft, Right = finalRight };
+            }
+            return new CalendarState(hwnd, window, r, expanded, monitor, "uia-card", slide);
         }
 
         // The card: the outermost ancestor of the expand/collapse button that still

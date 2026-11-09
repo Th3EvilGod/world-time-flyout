@@ -107,7 +107,16 @@ public static unsafe class Win32Util
         }
         else
         {
-            lock (FrameInsets) FrameInsets.TryGetValue(dpi, out inset);
+            bool known;
+            lock (FrameInsets) known = FrameInsets.TryGetValue(dpi, out inset);
+            if (!known)
+            {
+                // Not shown yet: the invisible resize border is the sizing frame plus
+                // padding, minus the 1 px DWM draws. No title bar, so nothing on top.
+                int side = PInvoke.GetSystemMetricsForDpi(SYSTEM_METRICS_INDEX.SM_CXSIZEFRAME, dpi)
+                         + PInvoke.GetSystemMetricsForDpi(SYSTEM_METRICS_INDEX.SM_CXPADDEDBORDER, dpi) - 1;
+                if (side is > 0 and < 64) inset = (side, 0, side, side);
+            }
         }
         return new PixelRect(frame.Left - inset.L, frame.Top - inset.T, frame.Right + inset.R, frame.Bottom + inset.B);
     }

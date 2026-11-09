@@ -130,3 +130,4 @@ DeleteDC
 BITMAPINFO
 SetProcessWorkingSetSize
 GetCurrentProcess
+GetSystemMetricsForDpi

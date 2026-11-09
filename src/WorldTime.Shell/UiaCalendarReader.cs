@@ -74,6 +74,26 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
         return _uia->CreatePropertyCondition(prop, v);
     }
 
+    /// <summary>One cheap query so the first real one (when the calendar opens) is fast.</summary>
+    public void WarmUp()
+    {
+        IUIAutomationElement* root = null;
+        try
+        {
+            root = _uia->GetRootElement();
+            var el = root->FindFirstBuildCache(TreeScope.TreeScope_Children, _keyCondition, _cache);
+            if (el is not null) el->Release();
+        }
+        catch (Exception e) when (e is COMException or ArgumentException or UnauthorizedAccessException
+                                       or InvalidOperationException or TimeoutException)
+        {
+        }
+        finally
+        {
+            if (root is not null) root->Release();
+        }
+    }
+
     /// <summary>Key calendar elements plus the expand button's ancestors (nearest first).</summary>
     public (List<UiNode> Keys, List<UiNode> ButtonAncestors)? Read(nint hwnd, bool withAncestors = true)
     {

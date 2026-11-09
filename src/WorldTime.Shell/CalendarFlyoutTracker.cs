@@ -53,7 +53,15 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private CalendarState? _lastOpened;
     // expand/collapse smoothing
     private PixelRect? _lastRawCard;
+    private long _lastHeightChange;   // Environment.TickCount64
+    private int _lastSlide;
     private bool? _predictedExpanded;
+    /// <summary>
+    /// The card's height must stay put this long before it counts as settled: UIA
+    /// reports the expand/collapse animation in uneven steps, and two reads a few
+    /// ms apart (an event plus the timer) can see the same in-between height.
+    /// </summary>
+    private const int SettleMs = 120;
     private int? _settledExpandedHeight, _settledCollapsedHeight;
 
     private static bool Same(CalendarState a, CalendarState b) =>
@@ -129,6 +137,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         try
         {
             _reader = new UiaCalendarReader();
+            _reader.WarmUp(); // the first UIA query in a process is slow; pay for it now, not on the first open
             UiaAvailable = true;
         }
         catch (Exception e)
@@ -232,6 +241,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
                     if (!_closingRaised)
                     {
                         _closingRaised = true;
+                        Log?.Invoke("closing: foreground moved");
                         Closing?.Invoke("foreground moved");
                     }
                     Poll("foreground moved");
@@ -260,7 +270,9 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         if (rect.Width < 200 || rect.Height < 60) return;
 
         bool known = hwnd == _lastCalendarHwnd && _lastOpened is not null;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var state = ReadState(hwnd, fresh: true);
+        var readMs = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
         if (state is null && !known) return; // some other shell surface, not the calendar
 
         if (_flyout != 0) CloseFlyout("replaced");
@@ -269,10 +281,12 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         _misses = 0;
         _closingRaised = false;
         StartTimer();
-        Log?.Invoke($"flyout window ({reason}): class={Win32Util.ClassName(hwnd)} {state}");
+        Log?.Invoke($"flyout window ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - _openTick} ms ago): " +
+                    $"class={Win32Util.ClassName(hwnd)} {state}");
         _opening = true;
         _announced = false;
-        if (known)
+        bool ready = state is not null && state.Card.Height >= 60 * state.Monitor.Scale;
+        if (known && !ready)
         {
             _announced = true;
             var predicted = _lastOpened! with { Hwnd = hwnd, Window = rect, Source = "last-open" };
@@ -288,6 +302,8 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         if (state.Card.Height < 60 * state.Monitor.Scale) return;
         _opening = false;
         _lastRawCard = state.Card;
+        _lastSlide = state.SlideOffset;
+        _lastHeightChange = 0;
         _lastCalendarHwnd = state.Hwnd;
         _lastOpened = state;
         Remember(state);
@@ -315,24 +331,34 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         _misses = 0;
         if (_opening) { TryCompleteOpen(state); return; }
 
-        // Expand/collapse animates the card's height for ~300 ms. While it moves,
-        // jump straight to the final height when it is known from earlier in the
-        // session; otherwise wait for it to settle. Either way the panel resizes
-        // once instead of chasing every frame.
+        // Esc or a click elsewhere: the card starts sliding back out to the right
+        // before the foreground moves (and ~250 ms before the window is cloaked).
+        int lastSlide = _lastSlide;
+        _lastSlide = state.SlideOffset;
+        if (!_closingRaised && state.SlideOffset > lastSlide && state.SlideOffset > 6 * state.Monitor.Scale)
+        {
+            _closingRaised = true;
+            Log?.Invoke($"closing: card sliding out ({lastSlide} -> {state.SlideOffset} px)");
+            Closing?.Invoke("card sliding out");
+        }
+
+        // Expand/collapse animates the card's height for ~300 ms. As soon as it
+        // starts, jump to the final height (known from earlier in the session, else
+        // the usual Windows 11 size) so the panel resizes once, alongside; report
+        // the real size only after it has stopped changing.
         var last = _lastRawCard;
         _lastRawCard = state.Card;
-        bool moving = last is { } l && l.Height != state.Card.Height;
-        if (moving)
+        long now = Environment.TickCount64;
+        if (last is { } l && l.Height != state.Card.Height)
         {
-            bool expanding = state.Card.Height > last!.Value.Height;
-            // Final height: what it was last time in this state, else the usual
-            // Windows 11 size (corrected when it settles).
-            double s = state.Monitor.Scale;
-            int? target = (expanding ? _settledExpandedHeight : _settledCollapsedHeight)
-                          ?? (int)Math.Round((expanding ? 455 : 100) * s);
-            if (target is int h && _predictedExpanded != expanding)
+            _lastHeightChange = now;
+            bool expanding = state.Card.Height > l.Height;
+            if (_predictedExpanded != expanding)
             {
                 _predictedExpanded = expanding;
+                double s = state.Monitor.Scale;
+                int h = (expanding ? _settledExpandedHeight : _settledCollapsedHeight)
+                        ?? (int)Math.Round((expanding ? 455 : 100) * s);
                 var c = state.Card;
                 var predicted = state with
                 {
@@ -344,6 +370,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             }
             return;
         }
+        if (now - _lastHeightChange < SettleMs) return; // may still be moving
 
         // settled
         _predictedExpanded = null;

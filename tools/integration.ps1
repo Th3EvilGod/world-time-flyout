@@ -27,6 +27,7 @@ public static class W {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   public delegate bool EnumProc(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
   public static void Key(byte vk, bool up) { keybd_event(vk, 0, up ? 2u : 0u, UIntPtr.Zero); }
@@ -40,11 +41,21 @@ public static class W {
       return true; }, IntPtr.Zero);
     return found;
   }
+  // The panel window (by title, so tooltips and menus of the same process don't count).
+  public static IntPtr PanelOf(uint pid) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p);
+      if (p == pid) { var sb = new StringBuilder(64); GetWindowText(h, sb, 64); if (sb.ToString() == "World Time") { found = h; return false; } }
+      return true; }, IntPtr.Zero);
+    return found;
+  }
   // Records the panel's frame every few ms: "t:(L,T WxH)" for each change, "t:hidden" when it goes away.
   public static List<int[]> Track(uint pid, int ms) {
     var list = new List<int[]>(); var sw = Stopwatch.StartNew(); RECT last = new RECT(); bool shown = false;
+    IntPtr panel = PanelOf(pid);
     while (sw.ElapsedMilliseconds < ms) {
-      IntPtr h = VisibleWindowOf(pid, 150, 40);
+      if (panel == IntPtr.Zero) panel = PanelOf(pid);
+      IntPtr h = panel != IntPtr.Zero && Shown(panel) ? panel : IntPtr.Zero;
       int t = (int)sw.ElapsedMilliseconds;
       if (h != IntPtr.Zero) {
         RECT r = Frame(h);
@@ -87,7 +98,7 @@ function ExpandButton {
   $c = New-Object System.Windows.Automation.PropertyCondition($AE::AutomationIdProperty, 'ExpandCollapseButton')
   $AE::FromHandle($h).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
 }
-function Panel { [W]::VisibleWindowOf([uint32]$p.Id, 200, 60) }
+function Panel { $h = [W]::PanelOf([uint32]$p.Id); if ($h -ne [IntPtr]::Zero -and [W]::Shown($h)) { $h } else { [IntPtr]::Zero } }
 function PanelEl($id) {
   $h = Panel; if ($h -eq [IntPtr]::Zero) { return $null }
   $c = New-Object System.Windows.Automation.PropertyCondition($AE::AutomationIdProperty, $id)

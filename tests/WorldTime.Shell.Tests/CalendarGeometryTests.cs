@@ -44,6 +44,14 @@ public class CalendarGeometryTests
         // second frame of the open animation: full width, 28 px right of its final place
         var s = Resolve(Card(R(2240, 925, 336, 455)), Button(R(2535, 939, 24, 24)), Grid(R(2241, 980, 334, 350)))!;
         Assert.Equal(R(2212, 925, 336, 455), s.Card);
+        Assert.Equal(28, s.SlideOffset);
+    }
+
+    [Fact]
+    public void Settled_card_has_no_slide_offset()
+    {
+        var s = Resolve(Card(R(2212, 925, 336, 455)), Button(R(2507, 939, 24, 24)), Grid(R(2213, 980, 334, 350)))!;
+        Assert.Equal(0, s.SlideOffset);
     }
 
     [Fact]
