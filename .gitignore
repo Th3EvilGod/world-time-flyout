@@ -1,6 +1,11 @@
-build/
-dist/
+bin/
+obj/
 .vs/
-*.obj
-*.exe
-*.zip
+*.user
+artifacts/
+publish/
+dist/
+target/
+*.log
+TestResults/
+.mono/
