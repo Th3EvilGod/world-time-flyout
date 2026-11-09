@@ -42,8 +42,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private string _lastKeySignature = "";
     private nuint _timer;
     private int _misses;
-    private CalendarState? _pending;
     private bool _opening;
+    // expand/collapse smoothing
+    private PixelRect? _lastRawCard;
+    private bool? _predictedExpanded;
+    private int? _settledExpandedHeight, _settledCollapsedHeight;
 
     private static bool Same(CalendarState a, CalendarState b) =>
         a.Card == b.Card && a.Expanded == b.Expanded && a.Window == b.Window;
@@ -227,6 +230,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     {
         if (state.Card.Height < 60 * state.Monitor.Scale) return;
         _opening = false;
+        _lastRawCard = state.Card;
         Volatile.Write(ref _state, state);
         Log?.Invoke($"opened: {state}");
         Opened?.Invoke(state);
@@ -249,16 +253,44 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         }
         _misses = 0;
         if (_opening) { TryCompleteOpen(state); return; }
-        var prev = _state;
-        if (prev is not null && Same(prev, state)) { _pending = null; return; }
-        // Expand/collapse animates for ~300 ms: wait until two reads agree, so the
-        // panel switches once instead of resizing along with every frame.
-        if (_pending is null || !Same(_pending, state))
+
+        // Expand/collapse animates the card's height for ~300 ms. While it moves,
+        // jump straight to the final height when it is known from earlier in the
+        // session; otherwise wait for it to settle. Either way the panel resizes
+        // once instead of chasing every frame.
+        var last = _lastRawCard;
+        _lastRawCard = state.Card;
+        bool moving = last is { } l && l.Height != state.Card.Height;
+        if (moving)
         {
-            _pending = state;
+            bool expanding = state.Card.Height > last!.Value.Height;
+            int? target = expanding ? _settledExpandedHeight : _settledCollapsedHeight;
+            if (target is int h && _predictedExpanded != expanding)
+            {
+                _predictedExpanded = expanding;
+                var c = state.Card;
+                var predicted = state with
+                {
+                    Card = new PixelRect(c.Left, c.Bottom - h, c.Right, c.Bottom),
+                    Expanded = expanding,
+                    Source = state.Source + "+predicted",
+                };
+                Report(predicted, reason);
+            }
             return;
         }
-        _pending = null;
+
+        // settled
+        _predictedExpanded = null;
+        if (state.Expanded) _settledExpandedHeight = state.Card.Height;
+        else _settledCollapsedHeight = state.Card.Height;
+        var prev = _state;
+        if (prev is not null && Same(prev, state)) return;
+        Report(state, reason);
+    }
+
+    private void Report(CalendarState state, string reason)
+    {
         Volatile.Write(ref _state, state);
         Log?.Invoke($"changed ({reason}): {state}");
         Changed?.Invoke(state);
@@ -304,7 +336,8 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         StopTimer();
         Volatile.Write(ref _flyout, 0);
         Volatile.Write(ref _state, null);
-        _pending = null;
+        _lastRawCard = null;
+        _predictedExpanded = null;
         bool wasOpening = _opening;
         _opening = false;
         _lastAncestors = [];

@@ -43,7 +43,17 @@ public sealed class AppModel
     public IReadOnlyList<LocationReading> Readings =>
         _readings ??= WorldClock.Read(Settings.Locations, Settings.ReferenceId, Selection.Selected);
 
-    public LocationReading? ReferenceReading => Readings.FirstOrDefault(r => r.IsReference);
+    /// <summary>The reference city's reading, or null when no cities are saved.</summary>
+    public LocationReading? ReferenceReading
+    {
+        get
+        {
+            // LocationReading is a struct: FirstOrDefault would hand back an empty one
+            foreach (var r in Readings)
+                if (r.IsReference) return r;
+            return null;
+        }
+    }
 
     private void Invalidate(ChangeKind kind)
     {

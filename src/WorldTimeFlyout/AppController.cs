@@ -139,16 +139,6 @@ public sealed class AppController : IDisposable
             _state = PanelState.Standalone;
             return;
         }
-        if (DateTime.UtcNow - _panel.LastPointerDown < TimeSpan.FromMilliseconds(600))
-        {
-            // The calendar closed because of a click in the panel (some Windows builds
-            // dismiss it even for non-activating windows): keep the panel, take focus
-            // so that clicking elsewhere later closes it.
-            DiagLog.Detail($"calendar closed after a click in the panel ({reason}); staying open");
-            _state = PanelState.Standalone;
-            _panel.ActivateForInput();
-            return;
-        }
         // clicked elsewhere / Esc / clicked the clock again: close together
         HidePanel();
     }

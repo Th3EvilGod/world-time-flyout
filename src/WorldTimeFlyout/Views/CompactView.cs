@@ -18,7 +18,7 @@ public sealed partial class CompactView : Grid
     public const int PageSize = 3;
     public const double RowHeight = 24;
     public const double StripHeight = 22;
-    private const double PadTop = 4, PadBottom = 2;
+    private const double PadTop = 3, PadBottom = 1;
 
     /// <summary>
     /// Height for three rows plus the paging strip (DIPs). At 100% text size this

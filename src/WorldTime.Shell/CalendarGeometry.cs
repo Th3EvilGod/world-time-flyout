@@ -45,9 +45,10 @@ public static class CalendarGeometry
         MonitorInfo monitor)
     {
         double s = monitor.Scale;
-        UiNode? button = keys.FirstOrDefault(k => k.IsExpandButton && !k.Rect.IsEmpty);
-        UiNode? grid = keys.FirstOrDefault(k => k.IsCalendarGrid && !k.Offscreen && !k.Rect.IsEmpty);
-        UiNode? cardNode = keys.FirstOrDefault(k => k.IsCard && !k.Offscreen && !k.Rect.IsEmpty);
+        // (UiNode is a struct: FirstOrDefault would return an empty node, never null)
+        UiNode? button = Find(keys, k => k.IsExpandButton && !k.Rect.IsEmpty);
+        UiNode? grid = Find(keys, k => k.IsCalendarGrid && !k.Offscreen && !k.Rect.IsEmpty);
+        UiNode? cardNode = Find(keys, k => k.IsCard && !k.Offscreen && !k.Rect.IsEmpty);
         if (button is null && grid is null && cardNode is null) return null; // not the calendar flyout
 
         bool expanded = grid is not null && grid.Value.Rect.Height > 120 * s;
@@ -57,11 +58,13 @@ public static class CalendarGeometry
             // The card slides in from the right when the flyout opens. Its final
             // horizontal position is the window minus the shell's 12px margins, so
             // place against that instead of chasing the animation.
+            // While sliding in, the card keeps its full width but sits up to ~28 px
+            // to the right, so always pin it to the column when the window is one.
             var r = c.Rect;
             int margin = (int)Math.Round(12 * s);
             int finalLeft = window.Left + margin, finalRight = window.Right - margin;
-            if (finalRight - finalLeft > 100 * s && Math.Abs(r.Width - (finalRight - finalLeft)) > 2)
-                r = r with { Left = finalLeft, Right = finalRight };
+            bool column = finalRight - finalLeft > 200 * s && window.Width < 520 * s;
+            if (column) r = r with { Left = finalLeft, Right = finalRight };
             return new CalendarState(hwnd, window, r, expanded, monitor, "uia-card");
         }
 
@@ -95,6 +98,13 @@ public static class CalendarGeometry
     }
 
     /// <summary>Used when UI Automation is unavailable: assume the window is the calendar card.</summary>
+    private static UiNode? Find(IReadOnlyList<UiNode> nodes, Func<UiNode, bool> match)
+    {
+        foreach (var n in nodes)
+            if (match(n)) return n;
+        return null;
+    }
+
     public static CalendarState FromWindowOnly(nint hwnd, PixelRect window, MonitorInfo monitor) =>
         new(hwnd, window, window, window.Height > 300 * monitor.Scale, monitor, "window");
 
@@ -121,7 +131,7 @@ public static class CalendarGeometry
         {
             // Not enough room on the left (very narrow screen): stack above the card instead.
             left = Math.Max(work.Left, cal.Card.Right - width);
-            bottom = cal.Window.Top - gap;
+            bottom = cal.Card.Top - gap;
             top = bottom - height;
         }
         if (top < work.Top) top = work.Top;

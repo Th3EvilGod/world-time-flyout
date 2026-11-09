@@ -208,3 +208,13 @@ public class SunTests
 
     private static Instant I(string iso) => TimeMathTests.I(iso);
 }
+
+public class EmptyListTests
+{
+    [Fact]
+    public void No_locations_reads_nothing()
+    {
+        var rows = WorldClock.Read([], null, TimeMathTests.I("2026-11-09T14:00:00Z"));
+        Assert.Empty(rows);
+    }
+}

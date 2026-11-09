@@ -10,34 +10,11 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace WorldTime.Shell;
 
-/// <summary>A rectangle in physical screen pixels.</summary>
-public readonly record struct PixelRect(int Left, int Top, int Right, int Bottom)
-{
-    public int Width => Right - Left;
-    public int Height => Bottom - Top;
-    public bool IsEmpty => Width <= 0 || Height <= 0;
-
-    public static PixelRect Union(PixelRect a, PixelRect b) =>
-        a.IsEmpty ? b : b.IsEmpty ? a :
-        new(Math.Min(a.Left, b.Left), Math.Min(a.Top, b.Top), Math.Max(a.Right, b.Right), Math.Max(a.Bottom, b.Bottom));
-
-    public bool Contains(PixelRect o) => o.Left >= Left && o.Top >= Top && o.Right <= Right && o.Bottom <= Bottom;
-
-    public override string ToString() => $"({Left},{Top} {Width}x{Height})";
-
-    internal static PixelRect From(RECT r) => new(r.left, r.top, r.right, r.bottom);
-}
-
-public enum TaskbarEdge { Left = 0, Top = 1, Right = 2, Bottom = 3 }
-
-public readonly record struct MonitorInfo(PixelRect Bounds, PixelRect WorkArea, uint Dpi)
-{
-    public double Scale => Dpi / 96.0;
-}
-
 /// <summary>Small, allocation-light Win32 helpers.</summary>
 public static unsafe class Win32Util
 {
+    internal static PixelRect FromRect(RECT r) => new(r.left, r.top, r.right, r.bottom);
+
     private static readonly Dictionary<uint, string> ProcessNames = new();
     private static readonly Lock ProcessNamesLock = new();
 
@@ -102,10 +79,38 @@ public static unsafe class Win32Util
         RECT r;
         var hr = PInvoke.DwmGetWindowAttribute((HWND)hwnd, DWMWINDOWATTRIBUTE.DWMWA_EXTENDED_FRAME_BOUNDS, &r, (uint)sizeof(RECT));
         if (hr.Failed) PInvoke.GetWindowRect((HWND)hwnd, &r);
-        return PixelRect.From(r);
+        return FromRect(r);
     }
 
     public static nint ForegroundWindow() => PInvoke.GetForegroundWindow();
+
+    private static readonly Dictionary<uint, (int L, int T, int R, int B)> FrameInsets = new();
+
+    /// <summary>
+    /// The outer window rectangle whose visible frame (what DWM draws, without the
+    /// invisible resize borders) equals <paramref name="frame"/>. Border sizes are
+    /// measured from the window itself and cached per DPI.
+    /// </summary>
+    public static PixelRect OuterRectForFrame(nint hwnd, PixelRect frame)
+    {
+        uint dpi = PInvoke.GetDpiForWindow((HWND)hwnd);
+        RECT outer, visible;
+        PInvoke.GetWindowRect((HWND)hwnd, &outer);
+        var hr = PInvoke.DwmGetWindowAttribute((HWND)hwnd, DWMWINDOWATTRIBUTE.DWMWA_EXTENDED_FRAME_BOUNDS, &visible, (uint)sizeof(RECT));
+        (int L, int T, int R, int B) inset = default;
+        if (hr.Succeeded && IsVisible(hwnd) && visible.right > visible.left)
+        {
+            inset = (visible.left - outer.left, visible.top - outer.top, outer.right - visible.right, outer.bottom - visible.bottom);
+            if (inset.L is >= 0 and < 64 && inset.T is >= 0 and < 64 && inset.R is >= 0 and < 64 && inset.B is >= 0 and < 64)
+                lock (FrameInsets) FrameInsets[dpi] = inset;
+            else inset = default;
+        }
+        else
+        {
+            lock (FrameInsets) FrameInsets.TryGetValue(dpi, out inset);
+        }
+        return new PixelRect(frame.Left - inset.L, frame.Top - inset.T, frame.Right + inset.R, frame.Bottom + inset.B);
+    }
 
     public static bool SetForeground(nint hwnd) => PInvoke.SetForegroundWindow((HWND)hwnd);
 
@@ -128,7 +133,7 @@ public static unsafe class Win32Util
         PInvoke.GetMonitorInfo(mon, &mi);
         uint dx = 96, dy = 96;
         PInvoke.GetDpiForMonitor(mon, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, &dx, &dy);
-        return new MonitorInfo(PixelRect.From(mi.rcMonitor), PixelRect.From(mi.rcWork), dx == 0 ? 96 : dx);
+        return new MonitorInfo(FromRect(mi.rcMonitor), FromRect(mi.rcWork), dx == 0 ? 96 : dx);
     }
 
     /// <summary>The primary taskbar's edge and bounds.</summary>
@@ -138,7 +143,7 @@ public static unsafe class Win32Util
         var state = PInvoke.SHAppBarMessage(PInvoke.ABM_GETSTATE, &abd);
         var pos = new APPBARDATA { cbSize = (uint)sizeof(APPBARDATA) };
         PInvoke.SHAppBarMessage(PInvoke.ABM_GETTASKBARPOS, &pos);
-        return ((TaskbarEdge)Math.Clamp((int)pos.uEdge, 0, 3), PixelRect.From(pos.rc), (state & 1) != 0);
+        return ((TaskbarEdge)Math.Clamp((int)pos.uEdge, 0, 3), FromRect(pos.rc), (state & 1) != 0);
     }
 
     // ---- window styling for the companion panel ----

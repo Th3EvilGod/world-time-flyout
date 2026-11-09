@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests the pure calendar geometry (compiled in from WorldTime.Shell) against
+       values recorded on real Windows 11 machines. Runs on any OS. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\WorldTime.Shell\CalendarGeometry.cs" Link="CalendarGeometry.cs" />
+    <Compile Include="..\..\src\WorldTime.Shell\ScreenTypes.cs" Link="ScreenTypes.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
+  </ItemGroup>
+</Project>

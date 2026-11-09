@@ -92,7 +92,12 @@ public sealed partial class PanelWindow : Window, IPanelHost
     public Palette Palette => _theme.Current;
     public bool AnimationsEnabled => _theme.AnimationsEnabled;
     public bool IsShown => _shown;
-    public bool IsActive => _active;
+    /// <summary>
+    /// True only when the panel is the foreground window. A click can give the
+    /// panel a thread-local WM_ACTIVATE without taking the foreground from the
+    /// calendar; that must not count as "the user is working in the panel".
+    /// </summary>
+    public bool IsActive => _active && Win32Util.ForegroundWindow() == Hwnd;
     public PanelLayout Layout => _layout;
     public bool IsSearching => _expanded.IsSearching;
     /// <summary>When the user last pressed a mouse button or touched the panel.</summary>
@@ -113,8 +118,27 @@ public sealed partial class PanelWindow : Window, IPanelHost
     {
         SetLayout(layout);
         _rect = rect;
-        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(rect.Left, rect.Top, rect.Width, rect.Height));
+        ApplyBounds();
     }
+
+    /// <summary>
+    /// <see cref="_rect"/> is the visible frame we want. The bordered window has
+    /// invisible resize borders around it, so size the outer window to match.
+    /// </summary>
+    private void ApplyBounds()
+    {
+        _outer = Win32Util.OuterRectForFrame(Hwnd, _rect);
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(_outer.Left, _outer.Top, _outer.Width, _outer.Height));
+    }
+
+    /// <summary>After the first show the real border size is known; correct the bounds once.</summary>
+    private void FixBoundsAfterShow()
+    {
+        var frame = Win32Util.WindowRect(Hwnd);
+        if (frame != _rect) ApplyBounds();
+    }
+
+    private PixelRect _outer;
 
     /// <summary>Shows without taking activation (beside the calendar).</summary>
     public void ShowPassive(bool animate)
@@ -123,7 +147,8 @@ public sealed partial class PanelWindow : Window, IPanelHost
         _shown = true;
         Win32Util.AllowClickActivation = false;
         AppWindow.Show(false);
-        Win32Util.SetTopmostNoActivate(Hwnd, _rect, show: true);
+        Win32Util.SetTopmostNoActivate(Hwnd, _outer, show: true);
+        FixBoundsAfterShow();
         if (!wasShown && animate) PlayEntrance();
         Render(ChangeKind.Time);
     }
@@ -134,7 +159,8 @@ public sealed partial class PanelWindow : Window, IPanelHost
         bool wasShown = _shown;
         _shown = true;
         AppWindow.Show(true);
-        Win32Util.SetTopmostNoActivate(Hwnd, _rect, show: true);
+        Win32Util.SetTopmostNoActivate(Hwnd, _outer, show: true);
+        FixBoundsAfterShow();
         ActivateForInput();
         if (!wasShown && animate) PlayEntrance();
         Render(ChangeKind.Time);
