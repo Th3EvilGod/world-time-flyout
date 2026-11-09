@@ -39,27 +39,28 @@ public sealed class ScreenshotRunner(AppController controller, string dir)
             var panel = controller.Panel;
             var model = controller.Model;
             var blue = Windows.UI.Color.FromArgb(255, 0, 120, 212);
+            var red = Windows.UI.Color.FromArgb(255, 226, 36, 26);
             var orange = Windows.UI.Color.FromArgb(255, 247, 99, 12);
             var purple = Windows.UI.Color.FromArgb(255, 136, 23, 152);
 
-            await Shot("expanded-dark", true, blue, PanelLayout.Expanded, 360, 470);
-            await Shot("expanded-light", false, blue, PanelLayout.Expanded, 360, 470);
-            await Shot("compact-dark", true, blue, PanelLayout.Compact, 360, (int)Math.Ceiling(Views.CompactView.RequiredHeight));
-            await Shot("compact-light", false, blue, PanelLayout.Compact, 360, (int)Math.Ceiling(Views.CompactView.RequiredHeight));
+            await Shot("expanded-dark-red", true, red, PanelLayout.Expanded, 336, 455);
+            await Shot("expanded-light", false, blue, PanelLayout.Expanded, 336, 455);
+            await Shot("compact-dark-red", true, red, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
+            await Shot("compact-light", false, blue, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
 
             model.StepTime(6); // +3h with 30 minute steps
-            await Shot("expanded-shifted-dark-orange", true, orange, PanelLayout.Expanded, 360, 470);
-            await Shot("compact-shifted-light-purple", false, purple, PanelLayout.Compact, 360, (int)Math.Ceiling(Views.CompactView.RequiredHeight));
+            await Shot("expanded-shifted-dark-orange", true, orange, PanelLayout.Expanded, 336, 455);
+            await Shot("compact-shifted-light-purple", false, purple, PanelLayout.Compact, 336, (int)Math.Ceiling(Views.CompactView.RequiredHeightFor(1)));
             model.ResetToNow();
 
             model.SetClock(ClockStyle.H24);
-            await Shot("expanded-24h-light", false, blue, PanelLayout.Expanded, 360, 470);
+            await Shot("expanded-24h-light", false, blue, PanelLayout.Expanded, 336, 455);
             model.SetClock(ClockStyle.H12);
 
-            panel.Place(Rect(360, 470), PanelLayout.Expanded);
+            panel.Place(Rect(336, 455), PanelLayout.Expanded);
             panel.BeginSearch();
             await Task.Delay(400);
-            await Shot("search-dark", true, blue, PanelLayout.Expanded, 360, 470, keepState: true, typed: "tok");
+            await Shot("search-dark", true, blue, PanelLayout.Expanded, 336, 455, keepState: true, typed: "tok");
             panel.EndSearch();
 
             _log.Add($"tzdb {Zones.TzdbVersion}");

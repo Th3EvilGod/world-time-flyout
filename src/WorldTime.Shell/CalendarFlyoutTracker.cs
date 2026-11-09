@@ -23,7 +23,7 @@ namespace WorldTime.Shell;
 /// </summary>
 public sealed unsafe class CalendarFlyoutTracker : IDisposable
 {
-    public const uint PollInterval = 120;
+    public const uint PollInterval = 100;
     private const string ShellProcess = "shellexperiencehost.exe";
 
     private static CalendarFlyoutTracker? s_instance;
@@ -42,6 +42,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private string _lastKeySignature = "";
     private nuint _timer;
     private int _misses;
+    private CalendarState? _pending;
+    private bool _opening;
+
+    private static bool Same(CalendarState a, CalendarState b) =>
+        a.Card == b.Card && a.Expanded == b.Expanded && a.Window == b.Window;
 
     /// <summary>The calendar flyout was opened (or found already open).</summary>
     public event Action<CalendarState>? Opened;
@@ -210,10 +215,20 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
 
         if (_flyout != 0) CloseFlyout("replaced");
         Volatile.Write(ref _flyout, hwnd);
-        Volatile.Write(ref _state, state);
         _misses = 0;
         StartTimer();
-        Log?.Invoke($"opened ({reason}): {state} class={Win32Util.ClassName(hwnd)}");
+        Log?.Invoke($"flyout window ({reason}): class={Win32Util.ClassName(hwnd)} {state}");
+        _opening = true;
+        TryCompleteOpen(state);
+    }
+
+    /// <summary>Reports Opened once the card has a usable size (it grows in during the open animation).</summary>
+    private void TryCompleteOpen(CalendarState state)
+    {
+        if (state.Card.Height < 60 * state.Monitor.Scale) return;
+        _opening = false;
+        Volatile.Write(ref _state, state);
+        Log?.Invoke($"opened: {state}");
         Opened?.Invoke(state);
     }
 
@@ -233,9 +248,17 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             return;
         }
         _misses = 0;
+        if (_opening) { TryCompleteOpen(state); return; }
         var prev = _state;
-        if (prev is not null && prev.Card == state.Card && prev.Expanded == state.Expanded && prev.Window == state.Window)
+        if (prev is not null && Same(prev, state)) { _pending = null; return; }
+        // Expand/collapse animates for ~300 ms: wait until two reads agree, so the
+        // panel switches once instead of resizing along with every frame.
+        if (_pending is null || !Same(_pending, state))
+        {
+            _pending = state;
             return;
+        }
+        _pending = null;
         Volatile.Write(ref _state, state);
         Log?.Invoke($"changed ({reason}): {state}");
         Changed?.Invoke(state);
@@ -254,11 +277,12 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
                 : null;
         }
 
-        var read = _reader.Read(hwnd, withAncestors: fresh || _lastAncestors.Count == 0);
+        var read = _reader.Read(hwnd, withAncestors: false);
         if (read is null) return null;
         var (keys, ancestors) = read.Value;
         var signature = string.Join(";", keys.Select(k => $"{k.AutomationId}{k.ControlType}{k.Rect}{k.Offscreen}"));
-        if (ancestors.Count == 0 && signature != _lastKeySignature && keys.Any(k => k.IsExpandButton))
+        bool hasCard = keys.Any(k => k.IsCard && !k.Rect.IsEmpty);
+        if (!hasCard && (fresh || _lastAncestors.Count == 0 || signature != _lastKeySignature) && keys.Any(k => k.IsExpandButton))
         {
             // layout changed: refresh the container chain too
             read = _reader.Read(hwnd, withAncestors: true);
@@ -280,10 +304,13 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         StopTimer();
         Volatile.Write(ref _flyout, 0);
         Volatile.Write(ref _state, null);
+        _pending = null;
+        bool wasOpening = _opening;
+        _opening = false;
         _lastAncestors = [];
         _lastKeySignature = "";
         Log?.Invoke($"closed: {reason}");
-        Closed?.Invoke(reason);
+        if (!wasOpening) Closed?.Invoke(reason);
     }
 
     private void StartTimer()

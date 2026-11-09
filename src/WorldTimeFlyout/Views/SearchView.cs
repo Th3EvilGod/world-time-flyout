@@ -36,8 +36,8 @@ public sealed partial class SearchView : Grid
         RowDefinitions.Add(Ui.RowStar());
 
         var top = new Grid { ColumnSpacing = 4 };
-        top.ColumnDefinitions.Add(Ui.ColStar());
         top.ColumnDefinitions.Add(Ui.ColAuto());
+        top.ColumnDefinitions.Add(Ui.ColStar());
         _box = new TextBox
         {
             PlaceholderText = "Search city, country or time zone",
@@ -48,9 +48,9 @@ public sealed partial class SearchView : Grid
         AutomationProperties.SetName(_box, "Search for a city, country or time zone");
         _box.TextChanged += (_, _) => Query();
         _box.KeyDown += OnKey;
-        _close = Ui.SubtleButton(Ui.Icon(Glyph.Cancel, 12), "Close search", (_, _) => _host.EndSearch());
-        top.Children.Add(_box.At(0, 0));
-        top.Children.Add(_close.At(0, 1));
+        _close = Ui.SubtleButton(Ui.Icon(Glyph.Back, 14), "Back", (_, _) => _host.EndSearch());
+        top.Children.Add(_close.At(0, 0));
+        top.Children.Add(_box.At(0, 1));
         Children.Add(top.At(0));
 
         _status = Ui.Text("", 12);

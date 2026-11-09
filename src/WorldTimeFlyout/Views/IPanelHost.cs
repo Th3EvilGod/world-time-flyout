@@ -23,4 +23,7 @@ public interface IPanelHost
     void BeginSearch();
 
     void EndSearch();
+
+    /// <summary>Hovering a control that needs focus (search, menus): let the next click activate the panel.</summary>
+    void ArmActivation(bool armed);
 }

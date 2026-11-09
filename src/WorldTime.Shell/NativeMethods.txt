@@ -128,3 +128,5 @@ GetDIBits
 DeleteObject
 DeleteDC
 BITMAPINFO
+SetProcessWorkingSetSize
+GetCurrentProcess

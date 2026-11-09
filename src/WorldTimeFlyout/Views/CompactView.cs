@@ -16,10 +16,19 @@ namespace WorldTimeFlyout.Views;
 public sealed partial class CompactView : Grid
 {
     public const int PageSize = 3;
-    public const double RowHeight = 28;
-    public const double StripHeight = 26;
-    /// <summary>Height needed for three rows plus the paging strip (DIPs).</summary>
-    public const double RequiredHeight = 8 + PageSize * RowHeight + StripHeight + 4;
+    public const double RowHeight = 24;
+    public const double StripHeight = 22;
+    private const double PadTop = 4, PadBottom = 2;
+
+    /// <summary>
+    /// Height for three rows plus the paging strip (DIPs). At 100% text size this
+    /// is exactly the collapsed calendar's 100 px; larger text sizes grow it.
+    /// </summary>
+    public static double RequiredHeightFor(double textScale) =>
+        PadTop + (PageSize * RowHeight + StripHeight) * Math.Max(1, textScale) + PadBottom;
+
+    private double _rowHeight = RowHeight;
+    private readonly RowDefinition _stripRow;
 
     private readonly IPanelHost _host;
     private readonly Grid _viewport;
@@ -38,9 +47,10 @@ public sealed partial class CompactView : Grid
     public CompactView(IPanelHost host)
     {
         _host = host;
-        Padding = new Thickness(4, 8, 4, 4);
+        Padding = new Thickness(4, PadTop, 4, PadBottom);
         RowDefinitions.Add(Ui.RowStar());
-        RowDefinitions.Add(Ui.Row(StripHeight));
+        _stripRow = Ui.Row(StripHeight);
+        RowDefinitions.Add(_stripRow);
 
         _page = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Top };
         _rows = new CompactRow[PageSize];
@@ -231,7 +241,7 @@ public sealed partial class CompactView : Grid
 
     private CompactRow? RowAt(double y)
     {
-        int i = (int)(y / RowHeight);
+        int i = (int)(y / _rowHeight);
         return i >= 0 && i < PageSize && _rows[i].Visibility == Visibility.Visible ? _rows[i] : null;
     }
 
@@ -245,6 +255,14 @@ public sealed partial class CompactView : Grid
         else
             _host.Model.StepTime(-Math.Sign(delta));
         e.Handled = true;
+    }
+
+    public void SetTextScale(double scale)
+    {
+        scale = Math.Max(1, scale);
+        _rowHeight = RowHeight * scale;
+        foreach (var r in _rows) r.Height = _rowHeight;
+        _stripRow.Height = new GridLength(StripHeight * scale);
     }
 
     public void ApplyTheme(Palette p)

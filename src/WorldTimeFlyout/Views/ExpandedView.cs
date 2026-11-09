@@ -50,6 +50,8 @@ public sealed partial class ExpandedView : Grid
         _copyAll = Ui.SubtleButton(_copyIcon, "Copy all times", (_, _) => CopyAll());
         _add = Ui.SubtleButton(Ui.Icon(Glyph.Add, 16), "Add a city", (_, _) => _host.BeginSearch());
         _more = Ui.SubtleButton(Ui.Icon(Glyph.More, 16), "More options", (_, _) => _host.ShowMoreMenu(_more!));
+        _add.ActivatesPanel(host);
+        _more.ActivatesPanel(host);
         header.Children.Add(_title.At(0, 0));
         header.Children.Add(_copyAll.At(0, 1));
         header.Children.Add(_add.At(0, 2));
@@ -91,6 +93,7 @@ public sealed partial class ExpandedView : Grid
         emptyText.HorizontalAlignment = HorizontalAlignment.Center;
         var emptyButton = new Button { Content = "Add city", HorizontalAlignment = HorizontalAlignment.Center, AllowFocusOnInteraction = false };
         emptyButton.Click += (_, _) => _host.BeginSearch();
+        emptyButton.ActivatesPanel(host);
         _empty.Children.Add(emptyText);
         _empty.Children.Add(emptyButton);
         Children.Add(_empty.At(2));
@@ -121,6 +124,7 @@ public sealed partial class ExpandedView : Grid
         _chip.HorizontalAlignment = HorizontalAlignment.Stretch;
         _chip.HorizontalContentAlignment = HorizontalAlignment.Center;
         _chip.Padding = new Thickness(8, 0, 8, 0);
+        _chip.ActivatesPanel(host);
         _now = Ui.SubtleButton("Now", "Back to the current time", (_, _) => _host.Model.ResetToNow(), 28);
         _now.FontSize = 12;
         _now.Margin = new Thickness(4, 0, 4, 0);

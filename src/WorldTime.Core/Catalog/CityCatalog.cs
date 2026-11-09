@@ -10,7 +10,9 @@ public sealed record CityEntry(
     string CountryCode,
     string Admin1,
     int Population,
-    string ZoneId)
+    string ZoneId,
+    double Latitude,
+    double Longitude)
 {
     internal string FoldedName = "";
     internal string[] FoldedAlternates = [];
@@ -26,7 +28,9 @@ public sealed record SearchResult(
     string Detail,
     ResultKind Kind,
     int Population,
-    double Score)
+    double Score,
+    double? Latitude = null,
+    double? Longitude = null)
 {
     public SavedLocation ToLocation() => new()
     {
@@ -34,6 +38,8 @@ public sealed record SearchResult(
         ZoneId = ZoneId,
         CountryCode = CountryCode,
         Detail = Detail,
+        Latitude = Latitude,
+        Longitude = Longitude,
     };
 }
 
@@ -96,12 +102,14 @@ public sealed class CityCatalog
                     foreach (var a in f[3].Split('|')) countryAliases.Add((f[1], a));
                 continue;
             }
-            if (f.Length < 5) continue;
-            var city = new CityEntry(f[0], f[1], f[2], int.Parse(f[3], CultureInfo.InvariantCulture), f[4])
+            if (f.Length < 7) continue;
+            var inv = CultureInfo.InvariantCulture;
+            var city = new CityEntry(f[0], f[1], f[2], int.Parse(f[3], inv), f[4],
+                double.Parse(f[5], inv), double.Parse(f[6], inv))
             {
                 FoldedName = TextFold.Fold(f[0]),
-                FoldedAlternates = f.Length > 5 && f[5].Length > 0
-                    ? f[5].Split('|').Select(TextFold.Fold).Where(a => a.Length > 0).Distinct().ToArray()
+                FoldedAlternates = f.Length > 7 && f[7].Length > 0
+                    ? f[7].Split('|').Select(TextFold.Fold).Where(a => a.Length > 0).Distinct().ToArray()
                     : [],
             };
             cities.Add(city);
@@ -140,7 +148,11 @@ public sealed class CityCatalog
     {
         var city = LargestCityInZone(zoneId);
         return city is not null
-            ? new SavedLocation { Name = city.Name, ZoneId = zoneId, CountryCode = city.CountryCode, Detail = DetailFor(city) }
+            ? new SavedLocation
+            {
+                Name = city.Name, ZoneId = zoneId, CountryCode = city.CountryCode, Detail = DetailFor(city),
+                Latitude = city.Latitude, Longitude = city.Longitude,
+            }
             : new SavedLocation { Name = Zones.DisplayNameFromId(zoneId), ZoneId = zoneId, Detail = zoneId };
     }
 
@@ -172,7 +184,7 @@ public sealed class CityCatalog
             var name = city?.Name ?? Zones.DisplayNameFromId(zid);
             var detail = (city is null ? zid : DetailFor(city)) + " · " + raw.ToUpperInvariant();
             results.Add(new SearchResult(name, zid, city?.CountryCode, detail, ResultKind.Abbreviation,
-                city?.Population ?? 0, (upper ? 1900 : 700) - rank++ * 10));
+                city?.Population ?? 0, (upper ? 1900 : 700) - rank++ * 10, city?.Latitude, city?.Longitude));
         }
 
         // IANA zone ids: "America/New_York", "europe/ber"
@@ -185,7 +197,8 @@ public sealed class CityCatalog
                 if (s == 0) continue;
                 var city = LargestCityInZone(id);
                 results.Add(new SearchResult(city?.Name ?? Zones.DisplayNameFromId(id), id, city?.CountryCode,
-                    id, ResultKind.TimeZone, city?.Population ?? 0, s + PopBonus(city?.Population ?? 0) / 10));
+                    id, ResultKind.TimeZone, city?.Population ?? 0, s + PopBonus(city?.Population ?? 0) / 10,
+                    city?.Latitude, city?.Longitude));
             }
         }
 
@@ -203,7 +216,7 @@ public sealed class CityCatalog
                 .OrderByDescending(c => c.Population).Take(8);
             foreach (var c in perZone)
                 results.Add(new SearchResult(c.Name, c.ZoneId, c.CountryCode, DetailFor(c), ResultKind.Country,
-                    c.Population, s + PopBonus(c.Population)));
+                    c.Population, s + PopBonus(c.Population), c.Latitude, c.Longitude));
         }
 
         // Cities
@@ -233,7 +246,8 @@ public sealed class CityCatalog
         }
 
         foreach (var (c, s) in scored)
-            results.Add(new SearchResult(c.Name, c.ZoneId, c.CountryCode, DetailFor(c), ResultKind.City, c.Population, s));
+            results.Add(new SearchResult(c.Name, c.ZoneId, c.CountryCode, DetailFor(c), ResultKind.City, c.Population, s,
+                c.Latitude, c.Longitude));
 
         // Best first; one entry per (name, zone)
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

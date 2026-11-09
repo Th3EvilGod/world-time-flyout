@@ -49,10 +49,10 @@ public sealed class AppSettings
         var s = new AppSettings();
         var defaults = new List<SavedLocation>
         {
-            new() { Name = "Yerevan", ZoneId = "Asia/Yerevan", CountryCode = "AM", Detail = "Armenia" },
-            new() { Name = "New York", ZoneId = "America/New_York", CountryCode = "US", Detail = "New York, United States" },
-            new() { Name = "London", ZoneId = "Europe/London", CountryCode = "GB", Detail = "United Kingdom" },
-            new() { Name = "Tokyo", ZoneId = "Asia/Tokyo", CountryCode = "JP", Detail = "Japan" },
+            new() { Name = "Yerevan", ZoneId = "Asia/Yerevan", CountryCode = "AM", Detail = "Armenia", Latitude = 40.18, Longitude = 44.51 },
+            new() { Name = "New York", ZoneId = "America/New_York", CountryCode = "US", Detail = "New York, United States", Latitude = 40.71, Longitude = -74.01 },
+            new() { Name = "London", ZoneId = "Europe/London", CountryCode = "GB", Detail = "United Kingdom", Latitude = 51.51, Longitude = -0.13 },
+            new() { Name = "Tokyo", ZoneId = "Asia/Tokyo", CountryCode = "JP", Detail = "Japan", Latitude = 35.69, Longitude = 139.69 },
         };
         SavedLocation? system = null;
         if (systemZoneId is not null && Zones.IsValid(systemZoneId))

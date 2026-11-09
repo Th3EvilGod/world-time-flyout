@@ -88,6 +88,19 @@ public static class Ui
         return b;
     }
 
+    /// <summary>
+    /// Marks a control whose click must give the panel keyboard focus (search,
+    /// menus, pickers). Windows only hands the foreground to a background app on
+    /// a real click, so activation is armed while the pointer is over it.
+    /// </summary>
+    public static T ActivatesPanel<T>(this T el, IPanelHost host) where T : UIElement
+    {
+        el.PointerEntered += (_, _) => host.ArmActivation(true);
+        el.PointerExited += (_, _) => host.ArmActivation(false);
+        el.PointerCaptureLost += (_, _) => host.ArmActivation(false);
+        return el;
+    }
+
     /// <summary>Lightweight styling so the button is transparent until hovered.</summary>
     public static void StyleSubtle(Button b, Palette p)
     {

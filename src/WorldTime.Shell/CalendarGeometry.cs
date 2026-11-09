@@ -11,6 +11,8 @@ public readonly record struct UiNode(
     string Name)
 {
     public const int CalendarControlType = 50001;
+    public const string CardId = "CalendarCenterGrid";
+    public bool IsCard => AutomationId == CardId;
     public bool IsExpandButton => AutomationId == "ExpandCollapseButton";
     public bool IsCalendarGrid => ControlType == CalendarControlType || ClassName == "CalendarView";
 }
@@ -45,9 +47,23 @@ public static class CalendarGeometry
         double s = monitor.Scale;
         UiNode? button = keys.FirstOrDefault(k => k.IsExpandButton && !k.Rect.IsEmpty);
         UiNode? grid = keys.FirstOrDefault(k => k.IsCalendarGrid && !k.Offscreen && !k.Rect.IsEmpty);
-        if (button is null && grid is null) return null; // not the calendar flyout
+        UiNode? cardNode = keys.FirstOrDefault(k => k.IsCard && !k.Offscreen && !k.Rect.IsEmpty);
+        if (button is null && grid is null && cardNode is null) return null; // not the calendar flyout
 
         bool expanded = grid is not null && grid.Value.Rect.Height > 120 * s;
+
+        if (cardNode is { } c)
+        {
+            // The card slides in from the right when the flyout opens. Its final
+            // horizontal position is the window minus the shell's 12px margins, so
+            // place against that instead of chasing the animation.
+            var r = c.Rect;
+            int margin = (int)Math.Round(12 * s);
+            int finalLeft = window.Left + margin, finalRight = window.Right - margin;
+            if (finalRight - finalLeft > 100 * s && Math.Abs(r.Width - (finalRight - finalLeft)) > 2)
+                r = r with { Left = finalLeft, Right = finalRight };
+            return new CalendarState(hwnd, window, r, expanded, monitor, "uia-card");
+        }
 
         // The card: the outermost ancestor of the expand/collapse button that still
         // starts at the card's header row and stays inside the flyout window.

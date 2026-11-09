@@ -38,12 +38,15 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
         _cache->AddProperty(UIA_PROPERTY_ID.UIA_NamePropertyId);
         _cache->AddProperty(UIA_PROPERTY_ID.UIA_ExpandCollapseExpandCollapseStatePropertyId);
 
+        // CalendarCenterGrid is the calendar card itself (Windows 11 22H2 and later);
+        // the button and month grid identify the calendar and its expanded state.
         var c1 = StringCondition(UIA_PROPERTY_ID.UIA_AutomationIdPropertyId, "ExpandCollapseButton");
         var c2 = IntCondition(UIA_PROPERTY_ID.UIA_ControlTypePropertyId, UiNode.CalendarControlType);
         var c3 = StringCondition(UIA_PROPERTY_ID.UIA_ClassNamePropertyId, "CalendarView");
-        var conditions = stackalloc IUIAutomationCondition*[3] { c1, c2, c3 };
-        _keyCondition = _uia->CreateOrConditionFromNativeArray(conditions, 3);
-        c1->Release(); c2->Release(); c3->Release();
+        var c4 = StringCondition(UIA_PROPERTY_ID.UIA_AutomationIdPropertyId, UiNode.CardId);
+        var conditions = stackalloc IUIAutomationCondition*[4] { c1, c2, c3, c4 };
+        _keyCondition = _uia->CreateOrConditionFromNativeArray(conditions, 4);
+        c1->Release(); c2->Release(); c3->Release(); c4->Release();
 
         _walker = _uia->RawViewWalker;
     }

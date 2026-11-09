@@ -7,7 +7,7 @@ package, data CC BY 4.0 GeoNames, https://www.geonames.org/).
 Output: src/WorldTime.Core/Data/catalog.tsv.gz, a small tab-separated file:
     #catalog v1 <city count>
     C <tab> ISO2 <tab> Country name <tab> aliases (| separated)
-    <name> <tab> ISO2 <tab> admin1 <tab> population <tab> IANA zone <tab> alt names (|)
+    <name> <tab> ISO2 <tab> admin1 <tab> population <tab> IANA zone <tab> lat <tab> lon <tab> alt names (|)
 
 Run:  pip install geonamescache && python3 tools/build_catalog.py
 """
@@ -127,14 +127,15 @@ def main():
         alts = pick_alts(name, c.get("alternatenames") or [], int(c["population"]))
         if name != c["name"]:
             alts = [c["name"]] + [a for a in alts if a != c["name"]]
-        rows.append((int(c["population"]), name, cc, admin1, tz, alts))
+        rows.append((int(c["population"]), name, cc, admin1, tz, alts, float(c["latitude"]), float(c["longitude"])))
 
     rows.sort(key=lambda r: -r[0])
-    for pop, name, cc, admin1, tz, alts in rows:
-        lines.append("\t".join([clean(name), cc, clean(admin1), str(pop), tz, "|".join(clean(a) for a in alts)]))
+    for pop, name, cc, admin1, tz, alts, lat, lon in rows:
+        lines.append("\t".join([clean(name), cc, clean(admin1), str(pop), tz, "%.2f" % lat, "%.2f" % lon,
+                                 "|".join(clean(a) for a in alts)]))
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    data = ("#catalog v1 %d\n" % len(rows) + "\n".join(lines) + "\n").encode("utf-8")
+    data = ("#catalog v2 %d\n" % len(rows) + "\n".join(lines) + "\n").encode("utf-8")
     with gzip.GzipFile(OUT, "wb", compresslevel=9, mtime=0) as f:
         f.write(data)
     print("cities: %d, countries: %d, raw %.0f KB, gz %.0f KB" % (

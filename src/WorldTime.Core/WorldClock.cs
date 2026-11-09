@@ -11,6 +11,9 @@ public sealed class SavedLocation
     public string? CountryCode { get; set; }
     /// <summary>Secondary text such as "Armenia" or "Oregon, United States".</summary>
     public string? Detail { get; set; }
+    /// <summary>Optional coordinates, used for the day/night indicator.</summary>
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
 
     public SavedLocation Clone() => (SavedLocation)MemberwiseClone();
 }
@@ -26,7 +29,10 @@ public readonly record struct LocationReading(
     bool IsDaylightSaving)
 {
     public LocalDateTime Local => Zoned.LocalDateTime;
-    public bool IsDaytime => TimeMath.IsDaytime(Zoned.TimeOfDay);
+    /// <summary>Sun above the horizon (from coordinates when known, else 07:00-19:00).</summary>
+    public bool IsDaytime => Location.Latitude is { } lat && Location.Longitude is { } lon
+        ? Sun.IsUp(Zoned.ToInstant(), lat, lon)
+        : TimeMath.IsDaytime(Zoned.TimeOfDay);
     public bool IsWorkingHours => TimeMath.IsWorkingHours(Zoned.TimeOfDay) &&
                                   Zoned.DayOfWeek is not (IsoDayOfWeek.Saturday or IsoDayOfWeek.Sunday);
 }

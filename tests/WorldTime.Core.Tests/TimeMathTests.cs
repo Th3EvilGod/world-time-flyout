@@ -184,3 +184,27 @@ public class TimeSelectionTests
         Assert.True(sel.IsLive);
     }
 }
+
+public class SunTests
+{
+    [Theory]
+    // Yerevan 40.18N 44.51E: Nov 9 2026 sunset ~17:20 local (13:20Z), sunrise ~07:20 (03:20Z)
+    [InlineData("2026-11-09T13:00:00Z", 40.18, 44.51, true)]
+    [InlineData("2026-11-09T14:00:00Z", 40.18, 44.51, false)]  // 6 PM in November: dark
+    [InlineData("2026-11-09T03:00:00Z", 40.18, 44.51, false)]
+    [InlineData("2026-11-09T04:00:00Z", 40.18, 44.51, true)]
+    // Yerevan midsummer: 7 PM local is daylight (sunset ~20:40)
+    [InlineData("2026-06-21T15:00:00Z", 40.18, 44.51, true)]
+    [InlineData("2026-06-21T17:30:00Z", 40.18, 44.51, false)]
+    // New York Nov 9: sunset ~16:40 EST (21:40Z)
+    [InlineData("2026-11-09T21:20:00Z", 40.71, -74.01, true)]
+    [InlineData("2026-11-09T22:00:00Z", 40.71, -74.01, false)]
+    // Tromso polar night in December: never up
+    [InlineData("2026-12-15T11:00:00Z", 69.65, 18.96, false)]
+    // Sydney summer noon
+    [InlineData("2026-12-15T01:00:00Z", -33.87, 151.21, true)]
+    public void Sun_up_or_down(string utc, double lat, double lon, bool up) =>
+        Assert.Equal(up, Sun.IsUp(I(utc), lat, lon));
+
+    private static Instant I(string iso) => TimeMathTests.I(iso);
+}

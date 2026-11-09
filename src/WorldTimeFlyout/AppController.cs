@@ -28,6 +28,7 @@ public sealed class AppController : IDisposable
     private readonly ShellMessageWindow _messages = new();
     private readonly DispatcherQueueTimer _minuteTimer;
     private readonly DispatcherQueueTimer _hideCheck;
+    private readonly DispatcherQueueTimer _trimTimer;
     private PanelState _state = PanelState.Hidden;
     private CalendarState? _calendar;
     private readonly string _exePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "WorldTimeFlyout.exe");
@@ -60,6 +61,11 @@ public sealed class AppController : IDisposable
         _minuteTimer = _dq.CreateTimer();
         _minuteTimer.IsRepeating = false;
         _minuteTimer.Tick += (_, _) => { _model.Tick(); ScheduleMinuteTick(); };
+
+        _trimTimer = _dq.CreateTimer();
+        _trimTimer.IsRepeating = false;
+        _trimTimer.Interval = TimeSpan.FromSeconds(20);
+        _trimTimer.Tick += (_, _) => { if (_state == PanelState.Hidden) Win32Util.TrimWorkingSet(); };
 
         _hideCheck = _dq.CreateTimer();
         _hideCheck.IsRepeating = false;
@@ -94,6 +100,7 @@ public sealed class AppController : IDisposable
         DiagLog.Write($"started v{typeof(App).Assembly.GetName().Version?.ToString(3)}, tzdb {Zones.TzdbVersion}, " +
                       $"UIA {(_tracker.UiaAvailable ? "on" : "off")}, system zone {Zones.SystemZoneId()}");
 
+        _trimTimer.Start(); // after startup work is done, if nothing gets shown
         if (FirstRun && !_options.Background)
         {
             _panel.ShowWelcome(true);
@@ -164,7 +171,9 @@ public sealed class AppController : IDisposable
     {
         var layout = s.Expanded ? PanelLayout.Expanded : PanelLayout.Compact;
         if (_panel.IsSearching) layout = PanelLayout.Expanded;
-        double minHeight = layout == PanelLayout.Expanded ? Views.ExpandedView.RequiredHeight : Views.CompactView.RequiredHeight;
+        double minHeight = layout == PanelLayout.Expanded
+            ? Views.ExpandedView.RequiredHeight
+            : Views.CompactView.RequiredHeightFor(_theme.TextScale);
         if (_panel.IsSearching) minHeight = SearchHeight;
         var rect = CalendarGeometry.PanelRect(s, minWidthDip: 320, minHeightDip: (int)Math.Ceiling(minHeight));
         _panel.Place(rect, layout);
@@ -215,6 +224,8 @@ public sealed class AppController : IDisposable
         _state = PanelState.Hidden;
         _panel.HidePanel();
         _minuteTimer.Stop();
+        _trimTimer.Stop();
+        _trimTimer.Start();
         // Return to "now" next time unless the user is mid-comparison within a minute.
         _model.ResetToNow();
     }

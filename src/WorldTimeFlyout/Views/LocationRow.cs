@@ -167,7 +167,7 @@ public sealed partial class CompactRow : Grid
     public CompactRow(IPanelHost host)
     {
         _host = host;
-        Height = 28;
+        Height = CompactView.RowHeight;
         CornerRadius = new CornerRadius(4);
         Padding = new Thickness(10, 0, 10, 0);
         Background = Ui.Transparent;

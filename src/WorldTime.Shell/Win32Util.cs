@@ -168,11 +168,42 @@ public static unsafe class Win32Util
     /// <summary>When true, a click is allowed to activate the panel (e.g. while typing a search).</summary>
     public static volatile bool AllowClickActivation;
 
+    /// <summary>
+    /// The pointer is over a control that needs keyboard focus or opens a menu
+    /// (search, "more", date picker). Clicks there activate the panel; Windows only
+    /// lets a background app take the foreground through a real click, so the
+    /// no-activate style is lifted before the click rather than after it.
+    /// </summary>
+    public static void ArmActivation(nint hwnd, bool armed)
+    {
+        s_armed = armed;
+        SetNoActivate(hwnd, !armed && !AllowClickActivation);
+    }
+
+    private static volatile bool s_armed;
+
+    public static void SetNoActivate(nint hwnd, bool on)
+    {
+        var ex = (WINDOW_EX_STYLE)(nint)PInvoke.GetWindowLongPtr((HWND)hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
+        var next = on ? ex | WINDOW_EX_STYLE.WS_EX_NOACTIVATE : ex & ~WINDOW_EX_STYLE.WS_EX_NOACTIVATE;
+        if (next != ex) PInvoke.SetWindowLongPtr((HWND)hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE, (nint)next);
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvStdcall)])]
     private static LRESULT NoActivateSubclass(HWND hwnd, uint msg, WPARAM wp, LPARAM lp, nuint id, nuint data)
     {
-        if (msg == PInvoke.WM_MOUSEACTIVATE && !AllowClickActivation)
+        if (msg == PInvoke.WM_MOUSEACTIVATE)
+        {
+            uint mouseMsg = (uint)((lp.Value >> 16) & 0xFFFF);
+            const uint WM_RBUTTONDOWN = 0x0204;
+            // right click opens a context menu, which needs focus
+            if (AllowClickActivation || s_armed || mouseMsg == WM_RBUTTONDOWN)
+            {
+                SetNoActivate(hwnd, false);
+                return (LRESULT)(nint)PInvoke.MA_ACTIVATE;
+            }
             return (LRESULT)(nint)PInvoke.MA_NOACTIVATE;
+        }
         return PInvoke.DefSubclassProc(hwnd, msg, wp, lp);
     }
 
@@ -181,6 +212,10 @@ public static unsafe class Win32Util
         var flags = SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | (show ? SET_WINDOW_POS_FLAGS.SWP_SHOWWINDOW : 0);
         PInvoke.SetWindowPos((HWND)hwnd, (HWND)(nint)(-1), r.Left, r.Top, r.Width, r.Height, flags);
     }
+
+    /// <summary>Returns memory to Windows while the panel is hidden; pages come back on demand.</summary>
+    public static void TrimWorkingSet() =>
+        PInvoke.SetProcessWorkingSetSize(PInvoke.GetCurrentProcess(), unchecked((nuint)(-1)), unchecked((nuint)(-1)));
 
     // ---- clipboard ----
 

@@ -88,6 +88,12 @@ public sealed class ThemeManager
     /// <summary>The taskbar and its flyouts follow the Windows mode, not the app mode.</summary>
     public bool Dark => Current.Dark;
 
+    /// <summary>Windows "Text size" (1.0 to 2.25).</summary>
+    public double TextScale
+    {
+        get { try { return _ui.TextScaleFactor; } catch { return 1; } }
+    }
+
     public bool AnimationsEnabled
     {
         get { try { return _ui.AnimationsEnabled; } catch { return true; } }

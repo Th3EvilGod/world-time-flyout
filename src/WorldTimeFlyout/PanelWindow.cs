@@ -72,7 +72,14 @@ public sealed partial class PanelWindow : Window, IPanelHost
             bool active = e.WindowActivationState != WindowActivationState.Deactivated;
             if (active == _active) return;
             _active = active;
-            if (!active) Deactivated?.Invoke();
+            DiagLog.Detail($"panel {(active ? "activated" : "deactivated")}");
+            if (!active)
+            {
+                // back to "clicks don't steal focus" for the next time it sits beside the calendar
+                Win32Util.AllowClickActivation = false;
+                Win32Util.ArmActivation(Hwnd, false);
+                Deactivated?.Invoke();
+            }
         };
         model.Changed += Render;
         theme.Changed += ApplyTheme;
@@ -139,6 +146,7 @@ public sealed partial class PanelWindow : Window, IPanelHost
         _shown = false;
         if (_expanded.IsSearching) _expanded.SetSearching(false);
         Win32Util.AllowClickActivation = false;
+        Win32Util.ArmActivation(Hwnd, false);
         AppWindow.Hide();
     }
 
@@ -146,8 +154,15 @@ public sealed partial class PanelWindow : Window, IPanelHost
     public void ActivateForInput()
     {
         Win32Util.AllowClickActivation = true;
-        Win32Util.SetForeground(Hwnd);
+        Win32Util.SetNoActivate(Hwnd, false);
+        if (Win32Util.ForegroundWindow() != Hwnd && !Win32Util.SetForeground(Hwnd))
+            DiagLog.Detail("SetForegroundWindow refused (expected unless triggered by a click on the panel)");
         Activate();
+    }
+
+    public void ArmActivation(bool armed)
+    {
+        if (!_active) Win32Util.ArmActivation(Hwnd, armed);
     }
 
     private void SetLayout(PanelLayout layout)
@@ -206,6 +221,7 @@ public sealed partial class PanelWindow : Window, IPanelHost
         _root.Background = p.HighContrast ? Ui.Brush(p.SolidBackground) : null;
         _expanded.ApplyTheme(p);
         _compact.ApplyTheme(p);
+        _compact.SetTextScale(_theme.TextScale);
     }
 
     /// <summary>For screenshots: paint an opaque stand-in for the acrylic backdrop.</summary>
@@ -385,6 +401,11 @@ public sealed partial class AlwaysActiveAcrylic : SystemBackdrop
         _controller = new DesktopAcrylicController { Kind = DesktopAcrylicKind.Base };
         _controller.AddSystemBackdropTarget(connectedTarget);
         _controller.SetSystemBackdropConfiguration(_config);
+    }
+
+    // We drive our own configuration (always "active"); ignore the framework's.
+    protected override void OnDefaultSystemBackdropConfigurationChanged(ICompositionSupportsSystemBackdrop target, XamlRoot xamlRoot)
+    {
     }
 
     protected override void OnTargetDisconnected(ICompositionSupportsSystemBackdrop disconnectedTarget)
