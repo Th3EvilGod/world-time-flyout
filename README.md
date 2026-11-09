@@ -95,8 +95,11 @@ clicked, so the calendar stays open while you use it. Details:
 Builds run on GitHub Actions ([ci.yml](.github/workflows/ci.yml)) on Windows: unit tests,
 a NativeAOT self-contained publish, screenshots rendered by the app, an end-to-end test
 against the real taskbar calendar, measured size/memory/CPU, and a zip with its SHA-256.
-Pushing a `v*` tag publishes a release (tags with a hyphen, like `v0.2.0-beta`, become
-pre-releases).
+
+To publish a release: Actions → Build → Run workflow on `main`, enter the version (for
+example `0.2.0`). It builds, tests and publishes the release with the zip, checksum and
+the notes from [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md). Pushing a `v*` tag does the
+same. Versions with a hyphen (`0.2.0-beta.1`) become pre-releases.
 
 Locally on Windows with the .NET 10 SDK:
 
