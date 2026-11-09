@@ -58,7 +58,7 @@ public sealed class ScreenshotRunner(AppController controller, string dir)
             up.Preview(UpdateStatus.Downloading, offer, progress: 0.42);
             await Shot("update-downloading-light", false, blue, PanelLayout.Expanded, 336, 455);
             up.Preview(UpdateStatus.Failed, error: "Couldn't reach GitHub. Check the internet connection.");
-            await Shot("update-failed-dark-red", true, red, PanelLayout.Expanded, 336, 455);
+            await Shot("update-error-dark-red", true, red, PanelLayout.Expanded, 336, 455);
             up.Preview(UpdateStatus.Idle, updatedFrom: new AppVersion(0, 1, 0));
             await Shot("updated-light", false, blue, PanelLayout.Expanded, 336, 455);
             up.Preview(UpdateStatus.Idle, manual: false);
