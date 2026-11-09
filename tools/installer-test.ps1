@@ -28,8 +28,11 @@ function WaitFor([scriptblock] $condition, [int] $seconds) {
   return $false
 }
 function RunSetup($label) {
-  $p = Start-Process $Setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$OutDir\$label.log" -PassThru -Wait
-  Check "$label exit code" ($p.ExitCode -eq 0) $p.ExitCode
+  # (not -Wait: in Windows PowerShell that also waits for the app the installer starts)
+  $p = Start-Process $Setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$OutDir\$label.log" -PassThru
+  $done = $p.WaitForExit(180000)
+  Check "$label finished" $done $(if ($done) { "exit code $($p.ExitCode)" } else { 'timed out' })
+  if ($done) { Check "$label exit code" ($p.ExitCode -eq 0) $p.ExitCode }
 }
 
 # make sure no other copy (e.g. from the integration test) is running
@@ -100,7 +103,8 @@ WaitFor { (Installed).Count -eq 1 } 15 | Out-Null
 
 # 4. uninstall (the uninstaller hands off to a temp copy, so wait for the result)
 $uninstaller = Join-Path $appDir 'unins000.exe'
-Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+$u = Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
+$u.WaitForExit(60000) | Out-Null
 Check 'uninstall removes the app' (WaitFor { -not (Test-Path $exe) } 60) ''
 Check 'uninstall stops the app' ((Installed).Count -eq 0) ''
 Check 'uninstall removes the shortcut' (-not (Test-Path $shortcut)) ''
