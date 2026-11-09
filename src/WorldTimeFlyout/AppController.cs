@@ -116,7 +116,8 @@ public sealed class AppController : IDisposable
         _tracker.Closed += r => _dq.TryEnqueue(() => OnCalendarClosed(r));
         _tracker.Start();
         DiagLog.Write($"started v{typeof(App).Assembly.GetName().Version?.ToString(3)}, tzdb {Zones.TzdbVersion}, " +
-                      $"UIA {(_tracker.UiaAvailable ? "on" : "off")}, system zone {Zones.SystemZoneId()}");
+                      $"UIA {(_tracker.UiaAvailable ? "on" : "off")}, animations {(_theme.AnimationsEnabled ? "on" : "off")}, " +
+                      $"system zone {Zones.SystemZoneId()}");
 
         _trimTimer.Start(); // after startup work is done, if nothing gets shown
         if (FirstRun && !_options.Background)

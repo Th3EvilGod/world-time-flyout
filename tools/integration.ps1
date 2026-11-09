@@ -19,6 +19,10 @@ public static class W {
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint uiParam, IntPtr pv, uint winIni);
+  [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint uiParam, out int pv, uint winIni);
+  public static int GetAnimations() { int v; SystemParametersInfo(0x1042, 0, out v, 0); return v; }
+  public static void SetAnimations(bool on) { SystemParametersInfo(0x1043, 0, new IntPtr(on ? 1 : 0), 3); }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
@@ -90,6 +94,13 @@ function PanelEl($id) {
   $AE::FromHandle($h).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
 }
 function ClickEl($e) { $r = $e.Current.BoundingRectangle; [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
+function CheckLayout($label) {
+  $card = Card
+  if (-not $card) { Check "$label layout follows the calendar" $false 'no card'; return }
+  $expanded = $card.Height -gt 200
+  $ok = if ($expanded) { (PanelEl 'DateChip') -ne $null } else { (PanelEl 'Tile0') -ne $null }
+  Check "$label layout follows the calendar" $ok ("calendar {0}" -f $(if ($expanded) { 'expanded' } else { 'collapsed' }))
+}
 function Motion($label, $track) {
   $line = "MOTION {0}: {1} steps: {2}" -f $label, $track.Count, [W]::Format($track)
   $results.Add($line); $line
@@ -108,6 +119,11 @@ function CheckAttached($label) {
   Check "$label attached" ($okGap -and $okBottom -and $okWidth -and $okHeight) "card=$card panel=$f gap=$gap"
 }
 
+# Runners usually have "Animation effects" off; turn them on so the motion is exercised.
+"animation effects before: " + [W]::GetAnimations()
+[W]::SetAnimations($true)
+"animation effects now: " + [W]::GetAnimations()
+
 $settings = Join-Path $OutDir 'settings.json'
 $exe = Join-Path $AppDir 'WorldTimeFlyout.exe'
 $log = Join-Path $env:LOCALAPPDATA 'WorldTimeFlyout\log.txt'
@@ -123,6 +139,7 @@ Motion 'open (first)' $track
 Start-Sleep -Milliseconds 600
 Check 'Win+N opens calendar' (CalendarOpen) ''
 CheckAttached 'after Win+N'
+CheckLayout 'after Win+N'
 Shot '1-open'
 
 # 2. expand / collapse with the calendar's own button
@@ -136,6 +153,7 @@ if ($btn) {
   Check 'expand/collapse resizes in steps (animated)' ($heights.Count -ge 4) ("{0} distinct heights" -f $heights.Count)
   Start-Sleep -Milliseconds 300
   CheckAttached 'after expand/collapse toggle'
+  CheckLayout 'after expand/collapse toggle'
   Shot '2-toggled'
   $btn = ExpandButton; $r = $btn.Current.BoundingRectangle
   [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
@@ -143,6 +161,7 @@ if ($btn) {
   Motion 'toggle back' $track
   Start-Sleep -Milliseconds 300
   CheckAttached 'after toggling back'
+  CheckLayout 'after toggling back'
   Shot '3-toggled-back'
 } else { Check 'expand button found' $false '' }
 

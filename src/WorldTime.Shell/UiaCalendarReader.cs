@@ -26,6 +26,7 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
     // only refresh their bounds (one small cross-process call each).
     private IUIAutomationElement* _cardEl, _gridEl;
     private nint _cachedFor;
+    private int _cardHeightAtRead;
 
     public UiaCalendarReader()
     {
@@ -96,7 +97,7 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
                     keys.Add(node);
                     if (withAncestors && node.IsExpandButton && ancestors.Count == 0)
                         ReadAncestors(el, ancestors);
-                    if (node.IsCard && _cardEl is null) { el->AddRef(); _cardEl = el; }
+                    if (node.IsCard && _cardEl is null) { el->AddRef(); _cardEl = el; _cardHeightAtRead = node.Rect.Height; }
                     else if (node.IsCalendarGrid && node.ControlType == UiNode.CalendarControlType && _gridEl is null) { el->AddRef(); _gridEl = el; }
                 }
                 finally
@@ -120,14 +121,18 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
 
     /// <summary>
     /// Refreshes only the card and month grid found by the last <see cref="Read"/>
-    /// for this window. Returns null when that is not possible (call Read).
+    /// for this window. Returns null when that is not possible or not reliable
+    /// (call Read): when the card's height changed since, the month grid may have
+    /// appeared or gone, and only a full search sees that.
     /// </summary>
     public List<UiNode>? ReadFast(nint hwnd)
     {
         if (hwnd != _cachedFor || _cardEl is null) return null;
         try
         {
-            var list = new List<UiNode>(2) { Refresh(_cardEl) };
+            var card = Refresh(_cardEl);
+            if (card.Rect.Height != _cardHeightAtRead) return null;
+            var list = new List<UiNode>(2) { card };
             if (_gridEl is not null) list.Add(Refresh(_gridEl));
             return list;
         }

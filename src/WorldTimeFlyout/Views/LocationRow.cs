@@ -190,7 +190,7 @@ public sealed partial class CompactTile : Grid
         timeCell.Children.Add(_time);
         timeCell.Children.Add(_copied);
 
-        var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 0, 2) };
+        var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 0, 6) };
         stack.Children.Add(_name);
         stack.Children.Add(timeCell);
         stack.Children.Add(_sub);
@@ -202,7 +202,7 @@ public sealed partial class CompactTile : Grid
             CornerRadius = new CornerRadius(1.5),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 0, 2),
+            Margin = new Thickness(0, 0, 0, 3),
         };
         Children.Add(stack);
         Children.Add(_pill);
