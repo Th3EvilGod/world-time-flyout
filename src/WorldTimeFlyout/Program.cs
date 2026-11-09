@@ -18,8 +18,9 @@ public static class Program
         if (options.Exit)
         {
             // Installer / scripts: close the running instance (politely, then by force).
-            bool closed = ShellMessageWindow.CloseExistingInstance(TimeSpan.FromSeconds(8));
-            DiagLog.Write($"--exit: {(closed ? "closed the running instance" : "nothing to close")}");
+            DiagLog.Write("--exit: closing the running instance");
+            var result = ShellMessageWindow.CloseExistingInstance(TimeSpan.FromSeconds(8));
+            DiagLog.Write($"--exit: {result}");
             return 0;
         }
         if (!options.Screenshot)

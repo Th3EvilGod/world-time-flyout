@@ -55,9 +55,17 @@ $before = (Installed | Select-Object -First 1).Id
 RunSetup 'reinstall'
 Check 'reinstall restarts the app' (WaitFor { $p = Installed; $p.Count -eq 1 -and $p[0].Id -ne $before } 20) ''
 
+function ExitApp($label) {
+  $x = Start-Process $exe -ArgumentList '--exit', '--diag' -PassThru
+  $x.WaitForExit(30000) | Out-Null
+  $ok = WaitFor { (Installed).Count -eq 0 } 15
+  $said = if (Test-Path $log) { (Get-Content $log | Select-String -Pattern '--exit:' | Select-Object -Last 1).Line } else { 'no log' }
+  Check "$label" $ok $said
+}
+
 # 3. over-the-air update from a local copy of a GitHub release
-& $exe --exit
-Check '--exit closes the app' (WaitFor { (Installed).Count -eq 0 } 15) ''
+ExitApp '--exit closes the app'
+if ((Installed).Count -gt 0) { Get-Process WorldTimeFlyout -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2 }
 $feed = Join-Path $OutDir 'feed'
 New-Item -ItemType Directory -Force $feed | Out-Null
 $name = Split-Path $Setup -Leaf
@@ -85,8 +93,8 @@ Copy-Item $log (Join-Path $OutDir 'update-log.txt') -ErrorAction SilentlyContinu
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 
 # a tampered download must be refused
-& $exe --exit
-WaitFor { (Installed).Count -eq 0 } 15 | Out-Null
+ExitApp '--exit closes the updated app'
+if ((Installed).Count -gt 0) { Get-Process WorldTimeFlyout -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2 }
 '0000000000000000000000000000000000000000000000000000000000000000  ' + $name | Set-Content (Join-Path $feed "$name.sha256") -Encoding ascii
 $server = Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $feed -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 3
@@ -96,14 +104,14 @@ Start-Sleep -Seconds 25
 $text = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
 Check 'bad checksum is refused' ($text -match 'did not match' -and -not $bad.HasExited) ''
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-& $exe --exit
-WaitFor { (Installed).Count -eq 0 } 15 | Out-Null
-& $exe --background
+Copy-Item $log (Join-Path $OutDir 'tampered-log.txt') -ErrorAction SilentlyContinue
+ExitApp '--exit closes the app again'
+Start-Process $exe -ArgumentList '--background'
 WaitFor { (Installed).Count -eq 1 } 15 | Out-Null
 
 # 4. uninstall (the uninstaller hands off to a temp copy, so wait for the result)
 $uninstaller = Join-Path $appDir 'unins000.exe'
-$u = Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru
+$u = Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$OutDir\uninstall.log" -PassThru
 $u.WaitForExit(60000) | Out-Null
 Check 'uninstall removes the app' (WaitFor { -not (Test-Path $exe) } 60) ''
 Check 'uninstall stops the app' ((Installed).Count -eq 0) ''

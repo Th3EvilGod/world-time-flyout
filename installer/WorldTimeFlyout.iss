@@ -114,9 +114,17 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     { "Start with Windows" entry, if it points at this install }
-    if RegQueryStringValue(HKCU, RunKey, 'WorldTimeFlyout', Value) and
-       (Pos(Lowercase(ExpandConstant('{app}')), Lowercase(Value)) > 0) then
-      RegDeleteValue(HKCU, RunKey, 'WorldTimeFlyout');
+    if RegQueryStringValue(HKCU, RunKey, 'WorldTimeFlyout', Value) then
+    begin
+      Log('Startup entry: ' + Value);
+      if Pos(Lowercase(ExpandConstant('{app}')), Lowercase(Value)) > 0 then
+      begin
+        if RegDeleteValue(HKCU, RunKey, 'WorldTimeFlyout') then Log('Startup entry removed')
+        else Log('Startup entry could not be removed');
+      end;
+    end
+    else
+      Log('No startup entry');
     if (not UninstallSilent) and
        (MsgBox('Also delete your cities and settings?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
       DelTree(ExpandConstant('{localappdata}\WorldTimeFlyout'), True, True, True);

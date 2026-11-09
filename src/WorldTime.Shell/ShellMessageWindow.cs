@@ -85,31 +85,34 @@ public sealed unsafe class ShellMessageWindow : IDisposable
     /// <summary>
     /// Closes a running instance: asks it to exit, waits, then ends the process
     /// if it is still there (older versions don't know the request). Returns
-    /// false when none was running.
+    /// what happened, for the log.
     /// </summary>
-    public static bool CloseExistingInstance(TimeSpan timeout)
+    public static string CloseExistingInstance(TimeSpan timeout)
     {
         HWND other;
         fixed (char* cls = WindowClass) other = PInvoke.FindWindow(cls, null);
-        if (other.IsNull) return false;
+        if (other.IsNull) return "none running";
         uint pid = 0;
         PInvoke.GetWindowThreadProcessId(other, &pid);
-        PInvoke.PostMessage(other, WM_EXIT_REQUEST, 0, 0);
+        bool posted = PInvoke.PostMessage(other, WM_EXIT_REQUEST, 0, 0);
         try
         {
             using var process = System.Diagnostics.Process.GetProcessById((int)pid);
-            if (!process.WaitForExit(timeout) &&
-                string.Equals(process.ProcessName, "WorldTimeFlyout", StringComparison.OrdinalIgnoreCase))
-            {
-                process.Kill();
-                process.WaitForExit(TimeSpan.FromSeconds(5));
-            }
+            if (process.WaitForExit(timeout)) return $"pid {pid} exited (posted={posted})";
+            if (!string.Equals(process.ProcessName, "WorldTimeFlyout", StringComparison.OrdinalIgnoreCase))
+                return $"pid {pid} is {process.ProcessName}, left alone";
+            process.Kill();
+            process.WaitForExit(TimeSpan.FromSeconds(5));
+            return $"pid {pid} did not exit (posted={posted}), ended it";
         }
         catch (ArgumentException)
         {
-            // already gone
+            return $"pid {pid} already gone";
         }
-        return true;
+        catch (Exception e)
+        {
+            return $"pid {pid}: {e.GetType().Name} {e.Message}";
+        }
     }
 
     // ---------------------------------------------------------------- tray icon
