@@ -114,13 +114,20 @@ jobs:
             screenshots/
             integration/
 
-      - name: Pre-release (tags only)
+      - name: Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $n = '${{ steps.pkg.outputs.name }}'
+          $hash = (Get-Content "$n.zip.sha256").Split(' ')[0]
+          $fence = '```'; $tick = '`'
+          $notes = (Get-Content docs/RELEASE_NOTES.md -Raw).TrimEnd() +
+            "`n`n**SHA-256** of ${tick}$n.zip${tick}:`n`n$fence`n$hash`n$fence`n"
+          Set-Content release-notes.md $notes -Encoding utf8
+          # v1.2.3-beta style tags are pre-releases; plain v1.2.3 is a normal release
+          $pre = if ($env:GITHUB_REF_NAME -like '*-*') { '--prerelease' } else { '--latest' }
           gh release create $env:GITHUB_REF_NAME "$n.zip" "$n.zip.sha256" metrics.md `
-            --prerelease --title "World Time Flyout $env:GITHUB_REF_NAME (preview)" `
-            --notes-file docs/RELEASE_NOTES.md
+            $pre --verify-tag --title "World Time Flyout $env:GITHUB_REF_NAME" `
+            --notes-file release-notes.md

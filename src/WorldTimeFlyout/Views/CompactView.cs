@@ -307,7 +307,7 @@ public sealed partial class CompactView : Grid
         int delta = props.MouseWheelDelta;
         if (delta == 0) return;
         if (props.IsHorizontalMouseWheel) Cycle(Math.Sign(delta));
-        else _host.Model.StepTime(-Math.Sign(delta));
+        else _host.Model.StepTime(Math.Sign(delta)); // wheel up = later
         e.Handled = true;
     }
 

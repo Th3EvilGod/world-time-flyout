@@ -139,6 +139,9 @@ $settings = Join-Path $OutDir 'settings.json'
 $exe = Join-Path $AppDir 'WorldTimeFlyout.exe'
 $log = Join-Path $env:LOCALAPPDATA 'WorldTimeFlyout\log.txt'
 Remove-Item $log -ErrorAction SilentlyContinue
+# Clear the desktop (Win+D) so screenshots show the wallpaper, not the runner's console.
+[W]::Key(0x5B, $false); [W]::Key(0x44, $false); [W]::Key(0x44, $true); [W]::Key(0x5B, $true)
+Start-Sleep -Milliseconds 1200
 # Warm up: the shell host may only start on the first Win+N after boot.
 WinN
 for ($i = 0; $i -lt 30 -and -not (CalendarOpen); $i++) { Start-Sleep -Milliseconds 200 }

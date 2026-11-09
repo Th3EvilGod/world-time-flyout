@@ -265,8 +265,8 @@ public sealed partial class TimeRuler : Grid
         var props = e.GetCurrentPoint(this).Properties;
         int delta = props.MouseWheelDelta;
         if (delta == 0) return;
-        // wheel down / right = later
-        int dir = props.IsHorizontalMouseWheel ? Math.Sign(delta) : -Math.Sign(delta);
+        // wheel up = later (like turning a value up), tilt/swipe right = later
+        int dir = Math.Sign(delta);
         _host.Model.StepTime(dir);
         e.Handled = true;
     }
