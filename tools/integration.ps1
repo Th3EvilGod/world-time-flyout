@@ -21,6 +21,18 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint uiParam, IntPtr pv, uint winIni);
   [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint uiParam, out int pv, uint winIni);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr wp, string lp, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
+  public static void Broadcast(string area) { IntPtr r; SendMessageTimeout(new IntPtr(0xffff), 0x1A, IntPtr.Zero, area, 2, 3000, out r); }
+  // Closes stray message boxes on the runner (e.g. "System Properties" about the paging file).
+  public static int CloseDialogs() {
+    int n = 0;
+    EnumWindows((h, l) => { var sb = new StringBuilder(64); GetClassName(h, sb, 64);
+      if (sb.ToString() == "#32770" && IsWindowVisible(h)) { PostMessage(h, 0x10, IntPtr.Zero, IntPtr.Zero); n++; }
+      return true; }, IntPtr.Zero);
+    return n;
+  }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   public static int GetAnimations() { int v; SystemParametersInfo(0x1042, 0, out v, 0); return v; }
   public static void SetAnimations(bool on) { SystemParametersInfo(0x1043, 0, new IntPtr(on ? 1 : 0), 3); }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -139,6 +151,7 @@ $settings = Join-Path $OutDir 'settings.json'
 $exe = Join-Path $AppDir 'WorldTimeFlyout.exe'
 $log = Join-Path $env:LOCALAPPDATA 'WorldTimeFlyout\log.txt'
 Remove-Item $log -ErrorAction SilentlyContinue
+"closed stray dialogs: " + [W]::CloseDialogs()
 # Clear the desktop (Win+D) so screenshots show the wallpaper, not the runner's console.
 [W]::Key(0x5B, $false); [W]::Key(0x44, $false); [W]::Key(0x44, $true); [W]::Key(0x5B, $true)
 Start-Sleep -Milliseconds 1200
@@ -320,6 +333,37 @@ if ($clock) {
   Check 'panel hides on second clock click' ((Panel) -eq [IntPtr]::Zero) ''
   Shot '7-clock-again'
 } else { Check 'taskbar clock found' $false '' }
+
+# 6. README pictures in dark mode (the panel follows the taskbar theme)
+function SetDark($dark) {
+  $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+  $v = if ($dark) { 0 } else { 1 }
+  Set-ItemProperty $k -Name AppsUseLightTheme -Value $v -Type DWord
+  Set-ItemProperty $k -Name SystemUsesLightTheme -Value $v -Type DWord
+  [W]::Broadcast('ImmersiveColorSet')
+}
+SetDark $true
+Start-Sleep -Seconds 4
+[W]::CloseDialogs() | Out-Null
+WinN; Start-Sleep -Milliseconds 1500
+if (CalendarOpen) {
+  SetCalendarExpanded $true | Out-Null
+  [W]::SetCursorPos(150, 650) | Out-Null; Start-Sleep -Milliseconds 700
+  Shot 'readme-expanded-dark'
+  SetCalendarExpanded $false | Out-Null
+  [W]::SetCursorPos(150, 650) | Out-Null; Start-Sleep -Milliseconds 700
+  Shot 'readme-compact-dark'
+  SetCalendarExpanded $true | Out-Null
+  $chip = PanelEl 'DateChip'
+  if ($chip) {
+    ClickEl $chip; Start-Sleep -Milliseconds 300
+    [W]::SetCursorPos(150, 650) | Out-Null; Start-Sleep -Milliseconds 700
+    Shot 'readme-date-picker-dark'
+    $cancel = PanelEl 'DateCancel'; if ($cancel) { ClickEl $cancel; Start-Sleep -Milliseconds 300 }
+  }
+  Esc; Start-Sleep -Milliseconds 800
+}
+SetDark $false
 
 Check 'app still running' (-not $p.HasExited) ''
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
