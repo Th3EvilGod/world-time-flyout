@@ -1,0 +1,106 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = '0.1.0'
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $v = $env:GITHUB_REF_NAME.TrimStart('v') }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Version $v"
+
+      - name: Unit tests (time zones, DST, search, settings, formatting)
+        run: dotnet test --project tests/WorldTime.Core.Tests -c Release
+
+      - name: Publish (NativeAOT, self-contained, x64)
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'.Split('-')[0]
+          dotnet publish src/WorldTimeFlyout/WorldTimeFlyout.csproj -c Release -r win-x64 `
+            -p:Version=${{ steps.ver.outputs.version }} -p:AssemblyVersion=$v -p:FileVersion=$v `
+            -o publish/WorldTimeFlyout
+          Copy-Item README.md, THIRD-PARTY-NOTICES.md publish/WorldTimeFlyout/
+          Remove-Item publish/WorldTimeFlyout/*.pdb -ErrorAction SilentlyContinue
+
+      - name: Screenshots (rendered by the real app)
+        shell: pwsh
+        run: |
+          $shots = "$pwd/screenshots"
+          $p = Start-Process publish/WorldTimeFlyout/WorldTimeFlyout.exe `
+            -ArgumentList '--screenshot', $shots, '--fixed-time', '2026-11-09T14:00:00Z' -PassThru
+          if (-not $p.WaitForExit(180000)) { Stop-Process $p -Force; throw 'screenshot run timed out' }
+          Get-Content "$shots/screenshots.txt"
+          Get-ChildItem $shots
+          if (Select-String -Path "$shots/screenshots.txt" -Pattern 'FAILED') { throw 'screenshot run failed' }
+
+      - name: Measure size, memory and idle CPU
+        shell: pwsh
+        run: |
+          ./tools/measure.ps1 -AppDir publish/WorldTimeFlyout -OutFile metrics.md
+          Get-Content metrics.md >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Package
+        id: pkg
+        shell: pwsh
+        run: |
+          $name = "WorldTimeFlyout-${{ steps.ver.outputs.version }}-win-x64"
+          Compress-Archive -Path publish/WorldTimeFlyout/* -DestinationPath "$name.zip" -CompressionLevel Optimal
+          $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Set-Content "$name.zip.sha256"
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "zip: $('{0:N1}' -f ((Get-Item "$name.zip").Length / 1MB)) MB  sha256: $hash" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: |
+            ${{ steps.pkg.outputs.name }}.zip
+            ${{ steps.pkg.outputs.name }}.zip.sha256
+            metrics.md
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots/
+
+      - name: Pre-release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $n = '${{ steps.pkg.outputs.name }}'
+          gh release create $env:GITHUB_REF_NAME "$n.zip" "$n.zip.sha256" metrics.md `
+            --prerelease --title "World Time Flyout $env:GITHUB_REF_NAME (preview)" `
+            --notes-file docs/RELEASE_NOTES.md

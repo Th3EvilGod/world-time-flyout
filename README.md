@@ -1,52 +1,75 @@
 # World Time Flyout
 
-Experimental lightweight native Windows 11 world clock companion, written in C++/Win32.
+A world clock and time-zone planner that opens next to the Windows 11 taskbar calendar.
+Click the clock in the taskbar and your cities appear beside the calendar, in the same
+Fluent style, theme and accent color.
 
-**Status:** v0.1 starter prototype, not a tested release. The code currently in this repository is a smaller first-stage implementation, not yet the full enhanced source archive shared earlier in chat.
+**Status: preview.** Built and unit-tested on GitHub's Windows runner. The calendar
+integration still needs confirming on real Windows 11 desktops (see "Known limits").
 
-## What works in the initial code
+## What it does
 
-- Native Windows popup using GDI, Segoe UI Variable, system light/dark setting and accent color
-- Three-zone compact pager and expanded scrollable list
-- Time zone conversions using built-in Windows DST data
-- Adjust selected time, horizontal drag in expanded mode, Now/reset, and copying times
-- Right-click to add/remove from 12 predefined cities
-- Open/close using Ctrl+Alt+T, a tray icon, or experimental detection of the primary taskbar clock area
+- Opens automatically beside the native calendar when you click the taskbar clock
+  (or press Win+N). Closes with it.
+- Follows the calendar: full view when the calendar is expanded, a three-city compact
+  view when it is collapsed.
+- One shared time cursor for every city. Drag the timeline, click an hour, use the
+  arrows or the mouse wheel. "Now" jumps back.
+- Click any time to copy it ("New York: 9:00 AM"). Right-click for copy with date,
+  copy all, reorder, set the reference city, remove.
+- Offline search across about 34,000 cities, plus countries, IANA zones
+  (America/New_York), abbreviations (EST, IST) and offsets (UTC+5:30). Typos are tolerated.
+- Correct daylight saving, 30 and 45 minute offsets and date changes, using the IANA
+  time-zone database bundled with the app.
+- Follows the Windows light/dark mode, accent color, contrast themes, text size and
+  animation settings, live.
+- No network access, no telemetry, no admin rights, nothing injected into Explorer.
 
-## Known limitations
+## Install
 
-- Clock click detection is an approximate check for the rightmost 115 pixels of the primary Windows taskbar. It can trigger on adjacent controls or fail with different taskbar positions, layouts or multiple monitors.
-- The panel does not yet detect the native calendar expanded/collapsed state or track its exact bounds. Compact/expanded switching is manual.
-- City search and arbitrary city selection, persistent preferences, exact minute input and a synchronized hourly grid are not implemented yet.
-- The visual match is an approximation, not a pixel-perfect Fluent UI.
-- Windows build and runtime behavior have NOT been verified.
+1. Download the latest `WorldTimeFlyout-<version>-win-x64.zip` from Releases
+   (or from the Actions run artifacts).
+2. Check it: `Get-FileHash .\WorldTimeFlyout-*.zip -Algorithm SHA256` must match the
+   `.sha256` file.
+3. Extract anywhere you keep apps, for example `%LOCALAPPDATA%\Programs\WorldTimeFlyout`,
+   and run `WorldTimeFlyout.exe`. The executable is not code-signed, so Windows may show
+   a SmartScreen prompt the first time.
 
-## Build on GitHub (no Git installation needed)
+It starts with Windows by default (per-user Run key, no admin). Turn that off in the
+panel's "More" menu or the tray icon menu.
 
-Open Actions, choose Build Windows x64, and download the artifact from a successful run. Extract the inner WorldTimeFlyout-win-x64.zip file.
+## Uninstall
 
-Run WorldTimeFlyout.exe directly, or in PowerShell next to the EXE run the optional install script with:
+1. Open the panel's "More" menu (or right-click the tray icon) and turn off
+   "Start with Windows", then choose Exit.
+2. Delete the app folder.
+3. Optionally delete `%LOCALAPPDATA%\WorldTimeFlyout` (settings and log).
 
-    .\install.ps1 -StartAtLogon
+## How it works
 
-The installer copies to %LOCALAPPDATA%\WorldTimeFlyout and creates a user Startup shortcut without elevation.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). In short: the app listens for the
+shell's own window events (the documented accessibility mechanism, scoped to the
+ShellExperienceHost process) and reads the calendar card's position through UI
+Automation. Its panel is a non-activating window, so clicking it does not steal focus
+from the calendar.
 
-## Manual Windows build
+## Build
 
-    cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-    cmake --build build --config Release
+Builds run on GitHub Actions (`.github/workflows/ci.yml`): unit tests, a NativeAOT
+publish, rendered screenshots, measured size/memory/CPU, a zip with SHA-256, and a
+pre-release for `v*` tags. Locally on Windows with the .NET 10 SDK:
 
-Run build/Release/WorldTimeFlyout.exe.
+    dotnet test --project tests/WorldTime.Core.Tests
+    dotnet publish src/WorldTimeFlyout -c Release -r win-x64 -o publish
 
-## Privacy and security
+Command-line options: `--background` (start hidden), `--show`, `--diag` (verbose log
+in `%LOCALAPPDATA%\WorldTimeFlyout\log.txt`), `--settings FILE`.
 
-No telemetry, network calls or administrator privileges. The first prototype uses a low-level mouse hook to detect clicks in a small taskbar area. It does not capture keyboard input or store mouse events. A more narrowly scoped Win32/UI Automation observer is preferred for a stable version.
+## Known limits
 
-## Roadmap
-
-1. Verify successful Windows build and correct any compile issues.
-2. Replace approximate clock detection with accurate native flyout tracking.
-3. Automatically match expanded/collapsed Windows calendar position and size.
-4. Searchable full city catalog and persistent settings.
-5. Fine-grained time scrubbing, accurate timeline, better copying.
-6. Accessibility and high-DPI/multi-monitor testing.
+- Detecting the calendar relies on the shell's UI Automation tree. If a Windows update
+  changes it, the panel falls back to the flyout window bounds, and the tray icon always
+  opens the panel on its own.
+- Typing in search or opening a menu needs keyboard focus, which closes the native
+  calendar. The panel stays open until you click elsewhere or press Esc.
+- Windows 11 only (the calendar flyout it attaches to does not exist on Windows 10).

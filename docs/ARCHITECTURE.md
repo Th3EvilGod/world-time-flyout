@@ -1,0 +1,82 @@
+# Architecture
+
+## Goals, in priority order
+
+1. Open beside the native Windows 11 calendar when the taskbar clock is clicked.
+2. Feel like part of Windows: Fluent controls, system theme, accent, acrylic, DPI.
+3. Fast multi-city comparison on one shared time cursor.
+4. Near-zero cost when idle; small footprint; no admin, no injection, no network.
+
+## Technology
+
+| Choice | Why |
+|---|---|
+| C# on .NET 10, compiled with **NativeAOT** | Native startup and no .NET runtime to install, while keeping a productive, memory-safe language. |
+| **WinUI 3** (Windows App SDK 2.6), self-contained | The real Windows 11 controls: menus, text box, pips pager, info bar, calendar and time pickers, focus visuals, contrast themes, screen-reader support. Bundled so nothing else needs installing. |
+| UI built in C#, no XAML markup | Fully AOT-safe (no reflection binding), compile-checkable anywhere, and every custom visual is repainted explicitly on theme/accent change. |
+| **Noda Time** + bundled tzdb | Correct historical and future offsets, independent of Windows registry time-zone data; IANA ids everywhere. |
+| **CsWin32** | Generated, blittable P/Invoke and COM (UI Automation) definitions that work under NativeAOT. |
+
+Rejected: Rust + Direct2D (smallest, but every control hand-drawn, which is what made the
+first prototype look cheap); Electron/WebView (heavy, not native); C++/WinRT WinUI (same
+look as C# but much slower to build and maintain).
+
+## Projects
+
+```
+src/WorldTime.Core      platform-neutral: time math, formatting, city catalog + search, settings (unit tested)
+src/WorldTime.Shell     Windows integration: calendar flyout tracker, UI Automation reader, geometry,
+                        tray/message window, clipboard, startup registration, screen capture
+src/WorldTimeFlyout     WinUI app: controller (lifecycle), model, panel window, views
+tests/                  xUnit tests for Core
+tools/                  catalog generator, icon generator, measurement script, flyout probe (Rust)
+```
+
+## Calendar integration
+
+The Windows 11 notification center and calendar live in one shell window owned by
+`ShellExperienceHost.exe`.
+
+1. **Events, not polling.** `SetWinEventHook` with `WINEVENT_OUTOFCONTEXT` (the documented
+   accessibility mechanism; nothing is loaded into another process): one global hook for
+   foreground changes, plus show/hide, cloak/uncloak and move events scoped to the shell
+   process id. The shell process is re-found if Explorer restarts.
+2. **Identify and measure with UI Automation.** When a shell window appears, one cached UIA
+   query looks for the calendar's `ExpandCollapseButton` and `CalendarView`. If neither
+   exists it is some other shell surface and is ignored. The card's bounds come from the
+   button's container chain (`CalendarGeometry.Resolve`); expanded means the month grid is
+   on screen.
+3. **Follow it while open.** While the calendar is visible its layout is re-read every
+   120 ms to catch expand/collapse; when it closes, everything stops.
+4. **Place the panel** immediately left of the card, same top/bottom/width, on the card's
+   monitor (`CalendarGeometry.PanelRect`). Compact mode never gets shorter than three rows.
+
+The panel window is `WS_EX_NOACTIVATE` and answers `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`;
+buttons don't take focus on click. So clicking times, paging and dragging the timeline do
+not deactivate the calendar. Typing (search) and menus need focus; the panel then becomes
+the active window, the calendar closes, and the panel stays until it loses focus or Esc.
+
+If UI Automation is unavailable the tracker falls back to the shell window's bounds. The
+tray icon (and launching the exe again) always opens the panel on its own.
+
+## Time model
+
+One absolute `Instant` is selected (`TimeSelection`). Every row renders that instant in its
+own zone. "Live" follows the clock and ticks once per minute only while the panel is
+visible. Step boundaries (15/30/60 min) are defined in the reference city's local time,
+and are computed per zone interval so they behave across DST gaps and overlaps
+(`TimeMath`, covered by tests for New York, Lord Howe, Kathmandu, Kolkata, Adelaide and the
+date line).
+
+## Resource use
+
+- Hidden: no timers, no polling. The only activity is the shell's own window events.
+- Visible: one timer per minute boundary; UIA reads every 120 ms only while the calendar is open.
+- The city catalog (750 KB compressed) is loaded only when search opens.
+- Measured numbers for each build are in the CI summary and in `metrics.md` of each release.
+
+## Settings
+
+`%LOCALAPPDATA%\WorldTimeFlyout\settings.json` (atomic writes; repaired or reset if
+hand-edited badly). `log.txt` in the same folder records errors; create `diag.on` there (or
+start with `--diag`) to also log calendar tracking details.
