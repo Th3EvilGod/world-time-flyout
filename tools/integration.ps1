@@ -128,6 +128,13 @@ $settings = Join-Path $OutDir 'settings.json'
 $exe = Join-Path $AppDir 'WorldTimeFlyout.exe'
 $log = Join-Path $env:LOCALAPPDATA 'WorldTimeFlyout\log.txt'
 Remove-Item $log -ErrorAction SilentlyContinue
+# Warm up: the shell host may only start on the first Win+N after boot.
+WinN
+for ($i = 0; $i -lt 30 -and -not (CalendarOpen); $i++) { Start-Sleep -Milliseconds 200 }
+"warm-up: calendar open = " + (CalendarOpen)
+Esc; Start-Sleep -Milliseconds 1500
+if (CalendarOpen) { WinN; Start-Sleep -Milliseconds 1500 }
+
 $p = Start-Process $exe -ArgumentList '--background', '--diag', '--settings', $settings -PassThru
 Start-Sleep -Seconds 8
 "winver: " + (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion + " " + [Environment]::OSVersion.Version
