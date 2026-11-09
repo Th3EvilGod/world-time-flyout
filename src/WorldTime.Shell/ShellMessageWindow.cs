@@ -89,9 +89,34 @@ public sealed unsafe class ShellMessageWindow : IDisposable
     /// </summary>
     public static string CloseExistingInstance(TimeSpan timeout)
     {
-        HWND other;
-        fixed (char* cls = WindowClass) other = PInvoke.FindWindow(cls, null);
-        if (other.IsNull) return "none running";
+        static HWND Find()
+        {
+            fixed (char* cls = WindowClass) return PInvoke.FindWindow(cls, null);
+        }
+        var other = Find();
+        if (other.IsNull)
+        {
+            // A copy may still be starting (no window yet): give it a moment, then end it.
+            var starting = System.Diagnostics.Process.GetProcessesByName("WorldTimeFlyout")
+                .Where(p => p.Id != Environment.ProcessId).ToList();
+            if (starting.Count == 0) return "none running";
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (other.IsNull && waited.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                Thread.Sleep(100);
+                other = Find();
+            }
+            if (other.IsNull)
+            {
+                foreach (var p in starting)
+                {
+                    try { p.Kill(); p.WaitForExit(TimeSpan.FromSeconds(5)); } catch { }
+                    p.Dispose();
+                }
+                return $"{starting.Count} starting copy(ies) without a window, ended";
+            }
+            foreach (var p in starting) p.Dispose();
+        }
         uint pid = 0;
         PInvoke.GetWindowThreadProcessId(other, &pid);
         bool posted = PInvoke.PostMessage(other, WM_EXIT_REQUEST, 0, 0);
