@@ -75,7 +75,7 @@ Check 'reinstall restarts the app' (WaitFor { $p = Installed; $p.Count -eq 1 -an
 
 function ExitApp($label) {
   foreach ($p in Installed) { "windows of pid $($p.Id) (started $($p.StartTime)): " + [Wins]::Of($p.Id) | Tee-Object -Append (Join-Path $OutDir 'windows.txt') }
-  if (Test-Path $log) { "--- log before $label"; Get-Content $log | Select-Object -Last 15 } | Add-Content (Join-Path $OutDir 'exit-logs.txt')
+  if (Test-Path $log) { @("--- log before $label") + @(Get-Content $log | Select-Object -Last 15) | Add-Content (Join-Path $OutDir 'exit-logs.txt') }
   $x = Start-Process $exe -ArgumentList '--exit', '--diag' -PassThru
   $x.WaitForExit(30000) | Out-Null
   $ok = WaitFor { (Installed).Count -eq 0 } 15
