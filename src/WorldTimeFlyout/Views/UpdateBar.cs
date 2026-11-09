@@ -12,8 +12,10 @@ namespace WorldTimeFlyout.Views;
 /// download progress, "You're up to date", errors, and "Updated to X" once
 /// after an update. Its button works without taking focus, so the calendar
 /// stays open while you click it.
+/// (Wraps an InfoBar rather than deriving from it: a C#-only subclass of a
+/// templated control has no XAML type info, so its style would not apply.)
 /// </summary>
-public sealed partial class UpdateBar : InfoBar
+public sealed class UpdateBar
 {
     private enum Shown { None, Offer, Progress, Result, Updated }
 
@@ -25,12 +27,12 @@ public sealed partial class UpdateBar : InfoBar
     private Shown _shown;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _autoHide;
 
+    public InfoBar Bar { get; } = new() { IsOpen = false, Margin = new Thickness(8, 0, 8, 6) };
+
     public UpdateBar(AppModel model)
     {
         _model = model;
-        IsOpen = false;
-        Margin = new Thickness(8, 0, 8, 6);
-        AutomationProperties.SetAutomationId(this, "UpdateBar");
+        AutomationProperties.SetAutomationId(Bar, "UpdateBar");
         _install = new Button { Content = "Install", AllowFocusOnInteraction = false };
         AutomationProperties.SetAutomationId(_install, "UpdateInstall");
         _install.Click += async (_, _) => { if (_updater is { } u) await u.InstallAsync(); };
@@ -41,7 +43,7 @@ public sealed partial class UpdateBar : InfoBar
             catch (Exception e) { DiagLog.Write($"open release page: {e.Message}"); }
         };
         _progress = new ProgressBar { Minimum = 0, Maximum = 1, Margin = new Thickness(0, 0, 0, 10) };
-        CloseButtonClick += (_, _) => OnClosedByUser();
+        Bar.CloseButtonClick += (_, _) => OnClosedByUser();
     }
 
     public void Attach(Updater updater)
@@ -98,7 +100,7 @@ public sealed partial class UpdateBar : InfoBar
                 else
                 {
                     _shown = Shown.None;
-                    IsOpen = false;
+                    Bar.IsOpen = false;
                 }
                 break;
         }
@@ -107,20 +109,20 @@ public sealed partial class UpdateBar : InfoBar
     private void Show(Shown kind, InfoBarSeverity severity, string title, string message, ButtonBase? action, UIElement? content, bool closable)
     {
         _shown = kind;
-        Severity = severity;
-        Title = title;
-        Message = message;
-        ActionButton = action;
-        Content = content;
-        IsClosable = closable;
-        IsOpen = true;
+        Bar.Severity = severity;
+        Bar.Title = title;
+        Bar.Message = message;
+        Bar.ActionButton = action;
+        Bar.Content = content;
+        Bar.IsClosable = closable;
+        Bar.IsOpen = true;
     }
 
     private void HideLater()
     {
         if (_autoHide is null)
         {
-            _autoHide = DispatcherQueue.CreateTimer();
+            _autoHide = Bar.DispatcherQueue.CreateTimer();
             _autoHide.IsRepeating = false;
             _autoHide.Interval = TimeSpan.FromSeconds(6);
             _autoHide.Tick += (_, _) => { if (_shown == Shown.Result) _updater?.Dismiss(); };

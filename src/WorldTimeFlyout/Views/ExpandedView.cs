@@ -76,7 +76,7 @@ public sealed partial class ExpandedView : Grid
         _welcome.Closed += (_, _) => _host.Model.SetFlag(s => s.WelcomeShown = true);
         UpdateBar = new UpdateBar(host.Model);
         var notices = new StackPanel();
-        notices.Children.Add(UpdateBar);
+        notices.Children.Add(UpdateBar.Bar);
         notices.Children.Add(_welcome);
         Children.Add(notices.At(1));
 
