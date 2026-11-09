@@ -13,7 +13,25 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force $OutDir | Out-Null
+$OutDir = (Resolve-Path $OutDir).Path
 $Setup = (Resolve-Path $Setup).Path
+Add-Type @"
+using System; using System.Collections.Generic; using System.Runtime.InteropServices; using System.Text;
+public static class Wins {
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern IntPtr GetThreadDesktop(uint threadId);
+  public static string Of(int pid) {
+    var names = new List<string>();
+    EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p);
+      if (p == (uint)pid) { var sb = new StringBuilder(128); GetClassName(h, sb, 128); names.Add(sb.ToString()); }
+      return true; }, IntPtr.Zero);
+    return string.Join(", ", names);
+  }
+}
+"@
 $results = New-Object System.Collections.Generic.List[string]
 function Check($name, $ok, $detail) { $line = "{0} {1} {2}" -f ($(if ($ok) { 'PASS' } else { 'FAIL' })), $name, $detail; $results.Add($line); $line }
 
@@ -56,6 +74,8 @@ RunSetup 'reinstall'
 Check 'reinstall restarts the app' (WaitFor { $p = Installed; $p.Count -eq 1 -and $p[0].Id -ne $before } 20) ''
 
 function ExitApp($label) {
+  foreach ($p in Installed) { "windows of pid $($p.Id) (started $($p.StartTime)): " + [Wins]::Of($p.Id) | Tee-Object -Append (Join-Path $OutDir 'windows.txt') }
+  if (Test-Path $log) { "--- log before $label"; Get-Content $log | Select-Object -Last 15 } | Add-Content (Join-Path $OutDir 'exit-logs.txt')
   $x = Start-Process $exe -ArgumentList '--exit', '--diag' -PassThru
   $x.WaitForExit(30000) | Out-Null
   $ok = WaitFor { (Installed).Count -eq 0 } 15
