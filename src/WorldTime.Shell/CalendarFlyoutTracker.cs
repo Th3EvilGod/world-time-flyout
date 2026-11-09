@@ -269,37 +269,56 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         var rect = Win32Util.WindowRect(hwnd);
         if (rect.Width < 200 || rect.Height < 60) return;
 
+        long openTick = EventTick(_eventTime);
         bool known = hwnd == _lastCalendarHwnd && _lastOpened is not null;
+        if (known)
+        {
+            // The calendar window we already know is coming back and is sliding in
+            // right now: announce it before the (slower) UI Automation read, with
+            // the layout it will most likely have.
+            BeginOpen(hwnd, openTick);
+            _announced = true;
+            var basis = _reopenLikeSettled ? _lastSettled ?? _lastOpened! : _lastOpened!;
+            var predicted = basis with { Hwnd = hwnd, Window = rect, Source = "predicted", SlideOffset = 0 };
+            Log?.Invoke($"opening (predicted, {(_reopenLikeSettled ? "as last left" : "as last opened")}): {predicted}");
+            Opening?.Invoke(predicted);
+        }
+
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var state = ReadState(hwnd, fresh: true);
         var readMs = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
         if (state is null && !known) return; // some other shell surface, not the calendar
+        if (!known) BeginOpen(hwnd, openTick);
+        Log?.Invoke($"flyout window ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - openTick} ms ago): " +
+                    $"class={Win32Util.ClassName(hwnd)} {state}");
+        if (state is not null) TryCompleteOpen(state);
+    }
 
+    private void BeginOpen(nint hwnd, long openTick)
+    {
         if (_flyout != 0) CloseFlyout("replaced");
-        Volatile.Write(ref _openTick, EventTick(_eventTime));
+        Volatile.Write(ref _openTick, openTick);
         Volatile.Write(ref _flyout, hwnd);
         _misses = 0;
         _closingRaised = false;
-        StartTimer();
-        Log?.Invoke($"flyout window ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - _openTick} ms ago): " +
-                    $"class={Win32Util.ClassName(hwnd)} {state}");
         _opening = true;
         _announced = false;
-        bool ready = state is not null && state.Card.Height >= 60 * state.Monitor.Scale;
-        if (known && !ready)
-        {
-            _announced = true;
-            var predicted = _lastOpened! with { Hwnd = hwnd, Window = rect, Source = "last-open" };
-            Log?.Invoke($"opening (predicted): {predicted}");
-            Opening?.Invoke(predicted);
-        }
-        if (state is not null) TryCompleteOpen(state);
+        StartTimer();
     }
+
+    /// <summary>
+    /// Whether the calendar reopens the way it was last left (expanded or
+    /// collapsed) rather than the way it last opened. Builds differ; learned
+    /// from what actually happens.
+    /// </summary>
+    private bool _reopenLikeSettled;
 
     /// <summary>Reports Opened once the card has a usable size (it grows in during the open animation).</summary>
     private void TryCompleteOpen(CalendarState state)
     {
         if (state.Card.Height < 60 * state.Monitor.Scale) return;
+        if (_lastOpened is { } lo && _lastSettled is { } ls && lo.Expanded != ls.Expanded)
+            _reopenLikeSettled = state.Expanded == ls.Expanded;
         _opening = false;
         _lastRawCard = state.Card;
         _lastSlide = state.SlideOffset;

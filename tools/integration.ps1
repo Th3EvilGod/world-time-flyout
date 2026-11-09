@@ -302,7 +302,7 @@ if ($clock) {
   $track = [W]::Track([uint32]$p.Id, 900)
   Motion 'open (clock, known layout)' $track
   $xs = @($track | Where-Object { $_[1] -ge 0 } | ForEach-Object { $_[1] })
-  Check 'panel slides in from the right' ($xs.Count -ge 5 -and ($xs[0] - $xs[-1]) -ge 100) ("{0} positions, x {1} -> {2}" -f $xs.Count, $(if ($xs.Count) { $xs[0] } else { '-' }), $(if ($xs.Count) { $xs[-1] } else { '-' }))
+  Check 'panel slides in from the right' ($xs.Count -ge 5 -and ($xs[0] - $xs[-1]) -ge 150) ("{0} positions, x {1} -> {2}" -f $xs.Count, $(if ($xs.Count) { $xs[0] } else { '-' }), $(if ($xs.Count) { $xs[-1] } else { '-' }))
   Start-Sleep -Milliseconds 600
   Check 'clock click opens calendar' (CalendarOpen) ''
   CheckAttached 'after clock click'
