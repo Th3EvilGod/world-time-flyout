@@ -131,10 +131,14 @@ jobs:
       - name: Install, update and uninstall (end to end)
         shell: powershell
         run: |
-          ./tools/installer-test.ps1 -Setup '${{ steps.setup.outputs.name }}' -Version '${{ steps.ver.outputs.version }}' -OutDir installer-test
-          "### Installer and updater" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-          Get-Content installer-test/results.txt | ForEach-Object { "- $_" } | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-          if (Select-String -Path installer-test/results.txt -Pattern '^FAIL') { throw 'installer test failed' }
+          $failed = $false
+          foreach ($mode in 'CurrentUser', 'AllUsers') {
+            ./tools/installer-test.ps1 -Setup '${{ steps.setup.outputs.name }}' -Version '${{ steps.ver.outputs.version }}' -OutDir "installer-test/$mode" -Mode $mode
+            "### Installer and updater: $mode" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+            Get-Content "installer-test/$mode/results.txt" | ForEach-Object { "- $_" } | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+            if (Select-String -Path "installer-test/$mode/results.txt" -Pattern '^FAIL') { $failed = $true }
+          }
+          if ($failed) { throw 'installer test failed' }
 
       - uses: actions/upload-artifact@v5
         with:
