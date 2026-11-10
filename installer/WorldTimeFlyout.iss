@@ -1,8 +1,10 @@
 ; World Time Flyout installer (Inno Setup 6). Built by CI:
-;   ISCC /DAppVersion=0.2.0 /DVersionNumeric=0.2.0 /DSourceDir=<publish dir> /DOutputDir=<dir> WorldTimeFlyout.iss
-; Per-user install, no admin rights. The in-app updater downloads this same
-; installer and runs it with /VERYSILENT; it closes the running app, replaces the
-; files and starts the app again.
+;   ISCC /DAppVersion=0.2.1 /DVersionNumeric=0.2.1 /DSourceDir=<publish dir> /DOutputDir=<dir> WorldTimeFlyout.iss
+; Asks "for me only" (no admin, %LOCALAPPDATA%\Programs) or "for all users"
+; (Program Files, asks for admin once). /CURRENTUSER and /ALLUSERS choose on the
+; command line. The in-app updater runs this same installer with /VERYSILENT and
+; the mode it was installed with; it closes the running app, replaces the files
+; and starts the app again as the signed-in user (never elevated).
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -36,7 +38,8 @@ VersionInfoProductName={#AppName}
 VersionInfoDescription={#AppName} setup
 VersionInfoProductTextVersion={#AppVersion}
 PrivilegesRequired=lowest
-DefaultDirName={localappdata}\Programs\{#AppName}
+PrivilegesRequiredOverridesAllowed=dialog commandline
+DefaultDirName={autopf}\{#AppName}
 DisableDirPage=auto
 DisableProgramGroupPage=yes
 DisableWelcomePage=yes
@@ -68,12 +71,42 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Parameters: "--s
 [Run]
 ; Interactive install: offer to open it. Silent install (updates): start it in the background.
 Filename: "{app}\{#AppExe}"; Parameters: "--show"; Description: "Open {#AppName}"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\{#AppExe}"; Parameters: "--background"; Flags: nowait; Check: WizardSilent
+Filename: "{app}\{#AppExe}"; Parameters: "--background"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [Code]
 const
   WM_APP_EXIT = $8003; { WM_APP + 3: the app's message window exits on it }
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{F4DB3BC9-6641-4980-8AAD-3BBDC55DBF72}_is1';
+
+function DirWritable(Dir: String): Boolean;
+var
+  F: String;
+begin
+  F := AddBackslash(Dir) + 'wtf-write-test.tmp';
+  Result := SaveStringToFile(F, 'x', False);
+  if Result then DeleteFile(F);
+end;
+
+{ A "just me" copy that was put in a folder only admins can write (e.g. by running
+  0.2.0's installer as administrator) can't be updated silently without admin
+  rights. Leave it running as it was instead of failing halfway; the panel tells
+  the user to reinstall for all users. }
+function InitializeSetup(): Boolean;
+var
+  Dir: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  if WizardSilent and (not IsAdmin) and (not IsAdminInstallMode) and
+     RegQueryStringValue(HKCU, UninstallKey, 'Inno Setup: App Path', Dir) and
+     DirExists(Dir) and (not DirWritable(Dir)) then
+  begin
+    Log('Installed for this user in a folder that needs admin rights: ' + Dir + '. Not updating.');
+    Exec(AddBackslash(Dir) + '{#AppExe}', '--background', '', SW_SHOWNORMAL, ewNoWait, ResultCode);
+    Result := False;
+  end;
+end;
 
 { Closes the running app so its files can be replaced: ask first, then make sure
   (versions before 0.2.0 don't know the request). }

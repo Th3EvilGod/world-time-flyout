@@ -5,11 +5,14 @@
 #      local copy of a GitHub release, downloads the installer, checks its
 #      SHA-256, runs it and exits; the installer starts the new app
 #   4. silent uninstall (files, shortcut, entry, startup entry removed)
+# -Mode CurrentUser ("just me", %LOCALAPPDATA%\Programs) or AllUsers (Program Files;
+# the runner is an administrator without prompts, so this checks the wiring, not UAC).
 # Runs in Windows PowerShell 5.1.
 param(
   [Parameter(Mandatory)] [string] $Setup,
   [Parameter(Mandatory)] [string] $Version,
-  [Parameter(Mandatory)] [string] $OutDir
+  [Parameter(Mandatory)] [string] $OutDir,
+  [ValidateSet('CurrentUser', 'AllUsers')] [string] $Mode = 'CurrentUser'
 )
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force $OutDir | Out-Null
@@ -35,10 +38,19 @@ public static class Wins {
 $results = New-Object System.Collections.Generic.List[string]
 function Check($name, $ok, $detail) { $line = "{0} {1} {2}" -f ($(if ($ok) { 'PASS' } else { 'FAIL' })), $name, $detail; $results.Add($line); $line }
 
-$appDir = Join-Path $env:LOCALAPPDATA 'Programs\World Time Flyout'
+if ($Mode -eq 'AllUsers') {
+  $appDir = Join-Path $env:ProgramFiles 'World Time Flyout'
+  $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{F4DB3BC9-6641-4980-8AAD-3BBDC55DBF72}_is1'
+  $shortcut = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\World Time Flyout.lnk'
+  $modeArg = '/ALLUSERS'
+} else {
+  $appDir = Join-Path $env:LOCALAPPDATA 'Programs\World Time Flyout'
+  $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{F4DB3BC9-6641-4980-8AAD-3BBDC55DBF72}_is1'
+  $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\World Time Flyout.lnk'
+  $modeArg = '/CURRENTUSER'
+}
 $exe = Join-Path $appDir 'WorldTimeFlyout.exe'
-$uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{F4DB3BC9-6641-4980-8AAD-3BBDC55DBF72}_is1'
-$shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\World Time Flyout.lnk'
+"mode ${Mode}: $appDir"
 $log = Join-Path $env:LOCALAPPDATA 'WorldTimeFlyout\log.txt'
 function Installed { @(Get-Process WorldTimeFlyout -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }) }
 # running and ready: the app's message window exists (it is created once startup is done)
@@ -50,7 +62,7 @@ function WaitFor([scriptblock] $condition, [int] $seconds) {
 }
 function RunSetup($label) {
   # (not -Wait: in Windows PowerShell that also waits for the app the installer starts)
-  $p = Start-Process $Setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$OutDir\$label.log" -PassThru
+  $p = Start-Process $Setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $modeArg, "/LOG=$OutDir\$label.log" -PassThru
   $done = $p.WaitForExit(180000)
   Check "$label finished" $done $(if ($done) { "exit code $($p.ExitCode)" } else { 'timed out' })
   if ($done) { Check "$label exit code" ($p.ExitCode -eq 0) $p.ExitCode }
@@ -112,6 +124,7 @@ $text = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
 Check 'update found' ($text -match "0\.0\.1 -> $([regex]::Escape($Version)) available") ''
 Check 'download verified (SHA-256)' ($text -match 'downloaded and verified') ''
 Check 'installer started by the app' ($text -match 'installer started') ''
+Check "app knew it is a $Mode install" ($text -match "\($Mode\)") ''
 Copy-Item $log (Join-Path $OutDir 'update-log.txt') -ErrorAction SilentlyContinue
 Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
 

@@ -59,8 +59,12 @@ differences are measured from.
 ## Install
 
 1. Download `WorldTimeFlyout-Setup-<version>-win-x64.exe` from
-   [Releases](../../releases/latest) and run it. It installs for your user only (no
-   admin) into `%LOCALAPPDATA%\Programs\World Time Flyout` and adds a Start menu entry.
+   [Releases](../../releases/latest) and run it (no need for "Run as administrator").
+   It asks how to install:
+   - **Install for me only**: into `%LOCALAPPDATA%\Programs\World Time Flyout`, no admin
+     rights, updates install without any prompt.
+   - **Install for all users**: into `Program Files`. Windows asks for admin rights once
+     now and again for each update.
 2. The installer is not code-signed yet, so the first time SmartScreen may say "Windows
    protected your PC": choose "More info", then "Run anyway".
 3. Optional: check the download first. `Get-FileHash .\WorldTimeFlyout-Setup-*.exe -Algorithm SHA256`
@@ -71,7 +75,8 @@ It starts with Windows (per user). Turn that off in the **⋯** menu or the tray
 **Updates:** once a day the app looks for a new release on GitHub. When there is one,
 the panel shows "Update available" with an **Install** button (also in the **⋯** menu and
 the tray icon menu). It downloads the new installer, checks its SHA-256 against the one
-published with the release, installs it silently and restarts. Check by hand with
+published with the release, installs it silently and restarts (for an all-users install,
+after you approve the Windows prompt). Check by hand with
 **⋯** → Check for updates; turn the daily check off with **⋯** → Check for updates daily.
 
 **Uninstall:** Settings → Apps → Installed apps → World Time Flyout → Uninstall. It asks

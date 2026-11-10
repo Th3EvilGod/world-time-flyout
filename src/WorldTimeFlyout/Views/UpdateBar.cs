@@ -81,7 +81,9 @@ public sealed class UpdateBar
             case UpdateStatus.Installing:
                 _progress.IsIndeterminate = true;
                 Show(Shown.Progress, InfoBarSeverity.Informational, "Installing update",
-                    "World Time Flyout will restart in a moment.", null, _progress, closable: false);
+                    u.Kind == InstallKind.AllUsers
+                        ? "Windows will ask for permission. World Time Flyout restarts when done."
+                        : "World Time Flyout will restart in a moment.", null, _progress, closable: false);
                 break;
             case UpdateStatus.Checking when u.Manual:
                 _progress.IsIndeterminate = true;

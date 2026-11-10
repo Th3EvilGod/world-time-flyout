@@ -62,12 +62,6 @@ public sealed class AppController : IDisposable
         _panel.PreferencesChanged += ApplyPreferences;
 
         _updater = new Updater(_model, _dq, options);
-        _updater.ExitForInstall += () =>
-        {
-            // the installer is waiting for our files: save and quit now
-            _model.SaveNow();
-            Application.Current.Exit();
-        };
         _panel.AttachUpdater(_updater);
 
         _minuteTimer = _dq.CreateTimer();

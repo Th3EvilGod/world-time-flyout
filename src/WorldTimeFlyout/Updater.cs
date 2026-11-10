@@ -10,12 +10,25 @@ namespace WorldTimeFlyout;
 
 public enum UpdateStatus { Idle, Checking, UpToDate, Available, Downloading, Installing, Failed }
 
+/// <summary>How this copy is installed, which decides how an update is run.</summary>
+public enum InstallKind
+{
+    /// <summary>Not installed by the installer (the zip): an update installs the regular "just me" version.</summary>
+    Portable,
+    /// <summary>"Just me": %LOCALAPPDATA%\Programs, no admin.</summary>
+    CurrentUser,
+    /// <summary>"All users": Program Files; Windows asks for admin rights on every update.</summary>
+    AllUsers,
+    /// <summary>"Just me" but in a folder only admins can write: can't be updated in place.</summary>
+    CurrentUserReadOnly,
+}
+
 /// <summary>
 /// Over-the-air updates from GitHub Releases. Once a day (if enabled) it reads
 /// the latest release; when a newer one has an installer it offers it. On
 /// request it downloads the installer, checks its SHA-256 against the release's
-/// .sha256 file, runs it silently and exits so the files can be replaced; the
-/// installer starts the new version. This is the only network access the app makes.
+/// .sha256 file and runs it silently; the installer closes the app, replaces the
+/// files and starts the new version. This is the only network access the app makes.
 /// </summary>
 public sealed class Updater
 {
@@ -74,8 +87,41 @@ public sealed class Updater
 
     /// <summary>Raised on the UI thread whenever anything above changed.</summary>
     public event Action? Changed;
-    /// <summary>The installer is running: the app must exit now so it can replace the files.</summary>
-    public event Action? ExitForInstall;
+
+    private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\{F4DB3BC9-6641-4980-8AAD-3BBDC55DBF72}_is1";
+    private InstallKind? _kind;
+
+    /// <summary>Found from the installer's Installed apps entry and whether this folder is writable.</summary>
+    public InstallKind Kind => _kind ??= DetectKind();
+
+    private static InstallKind DetectKind()
+    {
+        var dir = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+        static bool Points(Microsoft.Win32.RegistryKey root, string dir)
+        {
+            try
+            {
+                using var key = root.OpenSubKey(UninstallKey);
+                var path = key?.GetValue("Inno Setup: App Path") as string;
+                return path is not null &&
+                       string.Equals(Path.TrimEndingDirectorySeparator(path), dir, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception) { return false; }
+        }
+        if (Points(Microsoft.Win32.Registry.LocalMachine, dir)) return InstallKind.AllUsers;
+        if (!Points(Microsoft.Win32.Registry.CurrentUser, dir)) return InstallKind.Portable;
+        try
+        {
+            var probe = Path.Combine(dir, $".write-test-{Environment.ProcessId}");
+            File.WriteAllText(probe, "");
+            File.Delete(probe);
+            return InstallKind.CurrentUser;
+        }
+        catch (Exception)
+        {
+            return InstallKind.CurrentUserReadOnly;
+        }
+    }
 
     public static AppVersion CurrentVersion(string? pretend = null)
     {
@@ -162,10 +208,22 @@ public sealed class Updater
         }
     }
 
-    /// <summary>Downloads, verifies and runs the installer, then asks the app to exit.</summary>
+    /// <summary>
+    /// Downloads, verifies and runs the installer. The app keeps running: the
+    /// installer closes it once it is ready to replace the files (after Windows'
+    /// admin prompt, for all-users installs) and starts the new version. If the
+    /// installer ends while we are still here, the update was cancelled or failed.
+    /// </summary>
     public async Task InstallAsync()
     {
         if (_busy || Offer is not { } offer) return;
+        if (Kind == InstallKind.CurrentUserReadOnly)
+        {
+            Manual = true;
+            Fail("This copy is in a folder that needs admin rights, so it can't update itself. " +
+                 "Uninstall it, then run the new installer and choose \"Install for all users\".");
+            return;
+        }
         _busy = true;
         Manual = true;
         Progress = 0;
@@ -210,14 +268,20 @@ public sealed class Updater
             DiagLog.Write($"update: {offer.Installer.Name} downloaded and verified");
 
             Set(UpdateStatus.Installing);
-            Process.Start(new ProcessStartInfo(path)
+            string mode = Kind == InstallKind.AllUsers ? "/ALLUSERS" : "/CURRENTUSER";
+            using var installer = Process.Start(new ProcessStartInfo(path)
             {
-                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+                Arguments = $"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART {mode}",
                 UseShellExecute = true,
                 WorkingDirectory = dir,
-            });
-            DiagLog.Write($"update: installer started for {offer.Version}, exiting");
-            ExitForInstall?.Invoke();
+            }) ?? throw new InvalidOperationException("The installer did not start.");
+            DiagLog.Write($"update: installer started for {offer.Version} ({Kind}), waiting for it to close the app");
+            await installer.WaitForExitAsync();
+            // Still running: the installer never got to replace us.
+            DiagLog.Write($"update: installer ended with code {installer.ExitCode} and the app is still running");
+            throw new InvalidOperationException(Kind == InstallKind.AllUsers
+                ? "The update was cancelled (Windows needs your OK to update an all-users install)."
+                : $"The update didn't finish (installer code {installer.ExitCode}).");
         }
         catch (Exception e)
         {

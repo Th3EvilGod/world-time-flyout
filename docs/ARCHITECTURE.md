@@ -109,9 +109,10 @@ start with `--diag`) to also log calendar tracking details.
 
 ## Installer and updates
 
-The installer is Inno Setup (`installer/WorldTimeFlyout.iss`): per-user, no admin, into
-`%LOCALAPPDATA%\Programs\World Time Flyout`, with a Start menu entry and an Installed apps
-entry. Before copying files it asks a running copy to exit (`WM_APP+3` to the
+The installer is Inno Setup (`installer/WorldTimeFlyout.iss`). It asks "for me only"
+(no admin, `%LOCALAPPDATA%\Programs\World Time Flyout`, HKCU entries) or "for all users"
+(`Program Files`, HKLM entries, Inno elevates itself); `/CURRENTUSER` and `/ALLUSERS`
+choose on the command line. It adds a Start menu entry and an Installed apps entry. Before copying files it asks a running copy to exit (`WM_APP+3` to the
 `WorldTimeFlyout.MessageWindow` window; `--exit` does the same) and then makes sure with
 `taskkill`, since older versions don't know the request. A silent install starts the app in
 the background; uninstall removes the "Start with Windows" entry if it points at the
@@ -122,6 +123,11 @@ the earliest; 6 h after a failure). `UpdateFeed.Choose` (pure, unit-tested) acce
 newer, non-draft, non-pre-release version that has both
 `WorldTimeFlyout-Setup-<version>-win-x64.exe` and its `.sha256` over HTTPS. Install
 downloads both, hashes the installer while downloading, refuses a mismatch, then runs the
-installer with `/VERYSILENT` and exits so the files can be replaced. Test hooks:
+installer with `/VERYSILENT` plus `/ALLUSERS` or `/CURRENTUSER` (from which Installed apps
+entry points at the running copy) and waits: the installer closes the app when it is ready
+to replace the files and restarts it as the original, non-elevated user
+(`runasoriginaluser`). If the installer ends first (Windows prompt declined, error), the app
+reports it and keeps running. A "just me" copy in a folder the user can't write is not
+updated in place; the panel explains how to reinstall it for all users. Test hooks:
 `--update-feed URL` (loopback only), `--pretend-version X`, `--update-now`; CI uses them
 to run a real over-the-air update against a local copy of a release, plus a tampered one.
