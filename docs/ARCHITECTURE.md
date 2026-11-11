@@ -53,7 +53,18 @@ The Windows 11 notification center and calendar live in one shell window owned b
    monitor (`CalendarGeometry.PanelRect`). Compact mode never gets shorter than the tiles
    and the strip under them.
 
-### Motion
+#### Finding the shell host
+
+ShellExperienceHost is often not running when the app starts at sign-in; it starts on
+the first click on the clock and Windows may restart it later. Its windows are immersive,
+so `EnumWindows` never lists them; the tracker finds it by process name, and otherwise
+from system-wide foreground and cloak events (both rare). While the shell host is new,
+its window comes to the front before it is sized, shown and uncloaked, without further
+events we can rely on, so for 4 s after any sign of it the tracker looks through its
+visible CoreWindows every ~100 ms for the calendar card. Integration ends the shell host
+before the app starts and again mid-session to cover both cases.
+
+## Motion
 
 The panel window itself moves, one `SetWindowPos` per rendered frame (`PanelWindow`,
 `Motion`), using the values from Microsoft's "Motion in Windows 11" guidance:
