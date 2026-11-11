@@ -93,11 +93,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     /// <summary>The few messages worth keeping in the log even without --diag.</summary>
     public event Action<string>? Notice;
 
-    // A shell window that may be the calendar but whose card isn't laid out yet
-    // (the shell host is starting cold): read it again for a moment.
-    private nint _pending;
-    private long _pendingUntil;
-    private const int PendingMs = 4000;
+    // While the shell host is starting cold its windows are shown, sized and
+    // uncloaked without events we can rely on: for a few seconds after any sign
+    // of it, look through its windows for the calendar instead.
+    private long _scanUntil;
+    private const int ScanMs = 4000;
     private bool _firstOpenNoticed;
 
     public bool UiaAvailable { get; private set; }
@@ -179,7 +179,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         {
             if (msg.hwnd == default && msg.message == PInvoke.WM_TIMER)
             {
-                if (_flyout == 0) RetryPending();
+                if (_flyout == 0) Scan();
                 else Poll("timer");
                 continue;
             }
@@ -300,7 +300,6 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             case PInvoke.EVENT_OBJECT_HIDE:
             case PInvoke.EVENT_OBJECT_CLOAKED:
                 if (hwnd == _flyout) CloseFlyout(ev == PInvoke.EVENT_OBJECT_HIDE ? "hidden" : "cloaked");
-                else if (hwnd == _pending) ClearPending();
                 break;
             case PInvoke.EVENT_OBJECT_LOCATIONCHANGE:
                 if (hwnd == _flyout) Poll("moved");
@@ -317,7 +316,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             // A shell host that has just started brings its window to the front
             // before it is sized, shown and uncloaked, and those later changes
             // raise no event we act on: keep checking it for a moment.
-            Pend(hwnd, reason, openTick, "not on screen yet");
+            StartScan(hwnd, reason, "not on screen yet");
             return;
         }
 
@@ -342,19 +341,18 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         {
             // Another shell surface, or the calendar of a shell host that is still
             // starting (its card isn't laid out yet): look again for a moment.
-            Pend(hwnd, reason, openTick, "no calendar card yet");
+            StartScan(hwnd, reason, "no calendar card yet");
             return;
         }
-        ClearPending();
+        StopScan();
         if (!known) BeginOpen(hwnd, openTick);
-        Log?.Invoke($"flyout window ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - openTick} ms ago): " +
+        Log?.Invoke($"flyout window {hwnd:X} ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - openTick} ms ago): " +
                     $"class={Win32Util.ClassName(hwnd)} {state}");
         if (state is not null) TryCompleteOpen(state);
     }
 
-    private long _pendingTick;
     private long _shellAttachedTick;
-    private int _pendingSkip;
+    private int _scanSkip;
 
     private static bool LooksOpen(nint hwnd, out PixelRect rect)
     {
@@ -365,49 +363,56 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     }
 
     /// <summary>
-    /// Keeps re-checking a shell window for a few seconds. Only while the shell host
-    /// is new to us (just started, or no calendar seen yet this session), so other
+    /// Look through the shell host's windows for a few seconds. Only while it is
+    /// new to us (just started, or no calendar seen yet this session), so other
     /// shell surfaces (toasts, quick settings) cost nothing later on.
     /// </summary>
-    private void Pend(nint hwnd, string reason, long openTick, string why)
+    private void StartScan(nint hwnd, string reason, string why)
     {
         bool coldShell = !_firstOpenNoticed || Environment.TickCount64 - _shellAttachedTick < 15_000;
-        if (!coldShell || hwnd == _pending || !Win32Util.IsWindow(hwnd)) return;
-        _pending = hwnd;
-        _pendingUntil = Environment.TickCount64 + PendingMs;
-        _pendingTick = openTick;
-        _pendingSkip = 0;
-        Log?.Invoke($"shell window {hwnd:X} ({reason}): {why}; checking again for {PendingMs} ms");
+        if (!coldShell || _shellPid == 0) return;
+        bool already = _scanUntil != 0;
+        _scanUntil = Environment.TickCount64 + ScanMs;
+        if (already) return;
+        _scanSkip = 0;
+        Log?.Invoke($"shell window {hwnd:X} ({reason}): {why}; looking through the shell's windows for {ScanMs} ms");
         StartTimer();
     }
 
-    private void RetryPending()
+    private void StopScan()
     {
-        var hwnd = _pending;
-        if (hwnd == 0) { StopTimer(); return; }
-        if (Environment.TickCount64 > _pendingUntil || !Win32Util.IsWindow(hwnd))
-        {
-            Log?.Invoke($"shell window {hwnd:X}: not the calendar (gave up)");
-            ClearPending();
-            return;
-        }
-        if (++_pendingSkip % 3 != 0) return; // every ~100 ms is plenty here
-        if (!LooksOpen(hwnd, out _)) return;
-        var state = ReadState(hwnd, fresh: true);
-        if (state is null) return;
-        // It became visible within the last ~100 ms: its slide-in starts about now.
-        long tick = Environment.TickCount64;
-        ClearPending();
-        BeginOpen(hwnd, tick);
-        Log?.Invoke($"flyout window (appeared after a cold start): class={Win32Util.ClassName(hwnd)} {state}");
-        TryCompleteOpen(state);
+        if (_scanUntil == 0) return;
+        _scanUntil = 0;
+        if (_flyout == 0) StopTimer();
     }
 
-    private void ClearPending()
+    private void Scan()
     {
-        if (_pending == 0) return;
-        _pending = 0;
-        if (_flyout == 0) StopTimer();
+        if (_scanUntil == 0) { StopTimer(); return; }
+        if (Environment.TickCount64 > _scanUntil)
+        {
+            Log?.Invoke("shell scan: no calendar appeared");
+            StopScan();
+            return;
+        }
+        if (++_scanSkip % 3 != 0) return; // every ~100 ms is plenty here
+        HWND w = default;
+        for (int i = 0; i < 64; i++)
+        {
+            fixed (char* cls = "Windows.UI.Core.CoreWindow")
+                w = PInvoke.FindWindowEx(default, w, cls, null);
+            if (w.IsNull) break;
+            nint h = (nint)w.Value;
+            if (Win32Util.ProcessIdOf(h) != _shellPid || !LooksOpen(h, out _)) continue;
+            var state = ReadState(h, fresh: true);
+            if (state is null) continue;
+            StopScan();
+            // It came on screen within the last ~100 ms: its slide-in starts about now.
+            BeginOpen(h, Environment.TickCount64);
+            Log?.Invoke($"flyout window {h:X} (found by scanning the shell host): {state}");
+            TryCompleteOpen(state);
+            return;
+        }
     }
 
     private void BeginOpen(nint hwnd, long openTick)

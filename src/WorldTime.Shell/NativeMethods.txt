@@ -131,3 +131,4 @@ BITMAPINFO
 SetProcessWorkingSetSize
 GetCurrentProcess
 GetSystemMetricsForDpi
+FindWindowEx
