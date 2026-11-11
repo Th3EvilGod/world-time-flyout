@@ -185,7 +185,14 @@ public sealed class AppController : IDisposable
         if (visible) _panel.MoveTo(rect, layout, ifShown);
         else _panel.EnterFromRight(rect, layout, CalendarSlide(s), _tracker.OpenStartTick);
         StartClock();
+        if (!_attachedOnce)
+        {
+            _attachedOnce = true;
+            DiagLog.Write($"panel shown beside the calendar for the first time: {rect}, visible={_panel.IsShown}");
+        }
     }
+
+    private bool _attachedOnce;
 
     /// <summary>
     /// The calendar slides in from the right screen edge: its window starts one
