@@ -120,6 +120,7 @@ public sealed class AppController : IDisposable
         ApplyPreferences();
 
         _tracker.Log += m => DiagLog.Detail(m);
+        _tracker.Notice += m => DiagLog.Write(m);
         _tracker.Opening += s => _dq.TryEnqueue(() => OnCalendarOpening(s));
         _tracker.Opened += s => _dq.TryEnqueue(() => OnCalendarOpened(s));
         _tracker.Closing += r => _dq.TryEnqueue(() => OnCalendarClosing(r));
@@ -127,7 +128,7 @@ public sealed class AppController : IDisposable
         _tracker.Closed += r => _dq.TryEnqueue(() => OnCalendarClosed(r));
         _tracker.Start();
         DiagLog.Write($"started v{typeof(App).Assembly.GetName().Version?.ToString(3)}, tzdb {Zones.TzdbVersion}, " +
-                      $"UIA {(_tracker.UiaAvailable ? "on" : "off")}, animations {(_theme.AnimationsEnabled ? "on" : "off")}, " +
+                      $"animations {(_theme.AnimationsEnabled ? "on" : "off")}, " +
                       $"system zone {Zones.SystemZoneId()}");
 
         _trimTimer.Start(); // after startup work is done, if nothing gets shown
@@ -184,7 +185,14 @@ public sealed class AppController : IDisposable
         if (visible) _panel.MoveTo(rect, layout, ifShown);
         else _panel.EnterFromRight(rect, layout, CalendarSlide(s), _tracker.OpenStartTick);
         StartClock();
+        if (!_attachedOnce)
+        {
+            _attachedOnce = true;
+            DiagLog.Write($"panel shown beside the calendar for the first time: {rect}, visible={_panel.IsShown}");
+        }
     }
+
+    private bool _attachedOnce;
 
     /// <summary>
     /// The calendar slides in from the right screen edge: its window starts one

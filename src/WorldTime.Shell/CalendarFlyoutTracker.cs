@@ -14,10 +14,15 @@ namespace WorldTime.Shell;
 /// whether it is expanded.
 ///
 /// How: out-of-process WinEvent subscriptions (the documented accessibility
-/// mechanism; no DLL is injected anywhere) scoped to the shell process, plus
-/// a targeted UI Automation query to find the calendar card. While the flyout
-/// is open its layout is re-read every <see cref="PollInterval"/> ms to follow
+/// mechanism; no DLL is injected anywhere): foreground and cloak changes
+/// system-wide (both rare), show/hide/move scoped to the shell process, plus a
+/// targeted UI Automation query to find the calendar card. While the flyout is
+/// open its layout is re-read every <see cref="PollInterval"/> ms to follow
 /// expand/collapse; when it is closed nothing runs.
+///
+/// The shell host is often not running yet when the app starts at sign-in, is
+/// started on the first click on the clock, and can be restarted by Windows at
+/// any time, so it is found again from those system-wide events.
 ///
 /// All events are raised on the tracker's own thread.
 /// </summary>
@@ -27,12 +32,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private const string ShellProcess = "shellexperiencehost.exe";
 
     private static CalendarFlyoutTracker? s_instance;
-    private static uint s_foundShellPid;
 
     private readonly ManualResetEventSlim _started = new();
     private Thread? _thread;
     private uint _threadId;
-    private HWINEVENTHOOK _foregroundHook;
+    private HWINEVENTHOOK _foregroundHook, _cloakHook;
     private readonly List<HWINEVENTHOOK> _shellHooks = [];
     private uint _shellPid;
     private UiaCalendarReader? _reader;
@@ -86,6 +90,15 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     public event Action<string>? Closed;
     /// <summary>Diagnostic messages.</summary>
     public event Action<string>? Log;
+    /// <summary>The few messages worth keeping in the log even without --diag.</summary>
+    public event Action<string>? Notice;
+
+    // While the shell host is starting cold its windows are shown, sized and
+    // uncloaked without events we can rely on: for a few seconds after any sign
+    // of it, look through its windows for the calendar instead.
+    private long _scanUntil;
+    private const int ScanMs = 4000;
+    private bool _firstOpenNoticed;
 
     public bool UiaAvailable { get; private set; }
 
@@ -107,12 +120,13 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     public CalendarState? Current => Volatile.Read(ref _state);
     public nint FlyoutWindow => Volatile.Read(ref _flyout);
 
+    /// <summary>Starts the tracker thread; returns once its event hooks are in place.</summary>
     public void Start()
     {
         if (_thread is not null) return;
         _thread = new Thread(Run) { IsBackground = true, Name = "CalendarFlyoutTracker" };
         _thread.Start();
-        _started.Wait(TimeSpan.FromSeconds(5));
+        _started.Wait(TimeSpan.FromSeconds(2));
     }
 
     public void Dispose()
@@ -134,26 +148,41 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         s_instance = this;
         _threadId = PInvoke.GetCurrentThreadId();
         PInvoke.CoInitializeEx(null, COINIT.COINIT_MULTITHREADED);
+
+        // Hooks first: at sign-in UI Automation can be slow to answer, and events
+        // that arrive meanwhile simply queue up on this thread.
+        const uint global = PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS;
+        _foregroundHook = PInvoke.SetWinEventHook(PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
+            default(HMODULE), &OnWinEvent, 0, 0, global);
+        _cloakHook = PInvoke.SetWinEventHook(PInvoke.EVENT_OBJECT_CLOAKED, PInvoke.EVENT_OBJECT_UNCLOAKED,
+            default(HMODULE), &OnWinEvent, 0, 0, global);
+        uint shell = FindShellPid();
+        if (shell != 0) AttachToShell(shell, "running at start");
+        else Notice?.Invoke("shell host not running yet; waiting for the first calendar open");
+        _started.Set();
+
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             _reader = new UiaCalendarReader();
             _reader.WarmUp(); // the first UIA query in a process is slow; pay for it now, not on the first open
             UiaAvailable = true;
+            Notice?.Invoke($"UI Automation ready in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0} ms");
         }
         catch (Exception e)
         {
-            Log?.Invoke($"UI Automation unavailable, using window bounds only: {e.Message}");
+            Notice?.Invoke($"UI Automation unavailable, using window bounds only: {e.Message}");
         }
-
-        _foregroundHook = PInvoke.SetWinEventHook(PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
-            default(HMODULE), &OnWinEvent, 0, 0, PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
-        AttachToShell(FindShellPid());
-        _started.Set();
 
         MSG msg;
         while (PInvoke.GetMessage(&msg, default, 0, 0))
         {
-            if (msg.hwnd == default && msg.message == PInvoke.WM_TIMER) { Poll("timer"); continue; }
+            if (msg.hwnd == default && msg.message == PInvoke.WM_TIMER)
+            {
+                if (_flyout == 0) Scan();
+                else Poll("timer");
+                continue;
+            }
             if (msg.hwnd == default && msg.message == PInvoke.WM_APP + 7) { Poll("refresh"); continue; }
             PInvoke.TranslateMessage(&msg);
             PInvoke.DispatchMessage(&msg);
@@ -162,6 +191,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         StopTimer();
         foreach (var h in _shellHooks) PInvoke.UnhookWinEvent(h);
         if (!_foregroundHook.IsNull) PInvoke.UnhookWinEvent(_foregroundHook);
+        if (!_cloakHook.IsNull) PInvoke.UnhookWinEvent(_cloakHook);
         _reader?.Dispose();
         PInvoke.CoUninitialize();
         s_instance = null;
@@ -169,37 +199,46 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
 
     // ---------------------------------------------------------------- shell process
 
+    /// <summary>
+    /// The shell host in this session, by process (its windows are immersive, and
+    /// EnumWindows does not list those to desktop apps). 0 when it isn't running.
+    /// </summary>
     private static uint FindShellPid()
     {
-        s_foundShellPid = 0;
-        PInvoke.EnumWindows(&EnumShellWindow, 0);
-        return s_foundShellPid;
-    }
-
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
-    private static BOOL EnumShellWindow(HWND hwnd, LPARAM _)
-    {
-        uint pid = Win32Util.ProcessIdOf(hwnd);
-        if (Win32Util.ProcessName(pid) == ShellProcess)
+        try
         {
-            s_foundShellPid = pid;
-            return false;
+            int session = System.Diagnostics.Process.GetCurrentProcess().SessionId;
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName("ShellExperienceHost"))
+            {
+                using (p)
+                    if (p.SessionId == session) return (uint)p.Id;
+            }
         }
-        return true;
+        catch (Exception)
+        {
+            // fall through: found later from events
+        }
+        return 0;
     }
 
-    /// <summary>Scopes show/hide/cloak/move events to the shell process only.</summary>
-    private void AttachToShell(uint pid)
+    /// <summary>Scopes show/hide/move events to the shell process (they are frequent system-wide).</summary>
+    private void AttachToShell(uint pid, string how)
     {
         if (pid == 0 || pid == _shellPid) return;
         foreach (var h in _shellHooks) PInvoke.UnhookWinEvent(h);
         _shellHooks.Clear();
         _shellPid = pid;
+        _shellAttachedTick = Environment.TickCount64;
         const uint flags = PInvoke.WINEVENT_OUTOFCONTEXT;
         _shellHooks.Add(PInvoke.SetWinEventHook(PInvoke.EVENT_OBJECT_SHOW, PInvoke.EVENT_OBJECT_HIDE, default(HMODULE), &OnWinEvent, pid, 0, flags));
         _shellHooks.Add(PInvoke.SetWinEventHook(PInvoke.EVENT_OBJECT_LOCATIONCHANGE, PInvoke.EVENT_OBJECT_LOCATIONCHANGE, default(HMODULE), &OnWinEvent, pid, 0, flags));
-        _shellHooks.Add(PInvoke.SetWinEventHook(PInvoke.EVENT_OBJECT_CLOAKED, PInvoke.EVENT_OBJECT_UNCLOAKED, default(HMODULE), &OnWinEvent, pid, 0, flags));
-        Log?.Invoke($"watching {ShellProcess} pid {pid}");
+        Notice?.Invoke($"watching {ShellProcess} pid {pid} ({how})");
+    }
+
+    private bool IsShell(nint hwnd, out uint pid)
+    {
+        pid = Win32Util.ProcessIdOf(hwnd);
+        return pid != 0 && (pid == _shellPid || Win32Util.ProcessName(pid) == ShellProcess);
     }
 
     // ---------------------------------------------------------------- events
@@ -228,10 +267,9 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         {
             case PInvoke.EVENT_SYSTEM_FOREGROUND:
             {
-                uint pid = Win32Util.ProcessIdOf(hwnd);
-                if (Win32Util.ProcessName(pid) == ShellProcess)
+                if (IsShell(hwnd, out uint pid))
                 {
-                    AttachToShell(pid);
+                    AttachToShell(pid, "foreground");
                     Consider(hwnd, "foreground");
                 }
                 else if (_flyout != 0)
@@ -249,8 +287,15 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
                 break;
             }
             case PInvoke.EVENT_OBJECT_SHOW:
+                Consider(hwnd, "show");
+                break;
             case PInvoke.EVENT_OBJECT_UNCLOAKED:
-                Consider(hwnd, ev == PInvoke.EVENT_OBJECT_SHOW ? "show" : "uncloak");
+                // system-wide: only the shell host's windows matter
+                if (IsShell(hwnd, out uint shellPid))
+                {
+                    AttachToShell(shellPid, "uncloak");
+                    Consider(hwnd, "uncloak");
+                }
                 break;
             case PInvoke.EVENT_OBJECT_HIDE:
             case PInvoke.EVENT_OBJECT_CLOAKED:
@@ -265,11 +310,16 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private void Consider(nint hwnd, string reason)
     {
         if (hwnd == _flyout) { Poll(reason); return; }
-        if (!Win32Util.IsTopLevel(hwnd) || !Win32Util.IsVisible(hwnd) || Win32Util.IsCloaked(hwnd)) return;
-        var rect = Win32Util.WindowRect(hwnd);
-        if (rect.Width < 200 || rect.Height < 60) return;
-
         long openTick = EventTick(_eventTime);
+        if (!LooksOpen(hwnd, out var rect))
+        {
+            // A shell host that has just started brings its window to the front
+            // before it is sized, shown and uncloaked, and those later changes
+            // raise no event we act on: keep checking it for a moment.
+            StartScan(hwnd, reason, "not on screen yet");
+            return;
+        }
+
         bool known = hwnd == _lastCalendarHwnd && _lastOpened is not null;
         if (known)
         {
@@ -287,11 +337,82 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         var state = ReadState(hwnd, fresh: true);
         var readMs = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
-        if (state is null && !known) return; // some other shell surface, not the calendar
+        if (state is null && !known)
+        {
+            // Another shell surface, or the calendar of a shell host that is still
+            // starting (its card isn't laid out yet): look again for a moment.
+            StartScan(hwnd, reason, "no calendar card yet");
+            return;
+        }
+        StopScan();
         if (!known) BeginOpen(hwnd, openTick);
-        Log?.Invoke($"flyout window ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - openTick} ms ago): " +
+        Log?.Invoke($"flyout window {hwnd:X} ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - openTick} ms ago): " +
                     $"class={Win32Util.ClassName(hwnd)} {state}");
         if (state is not null) TryCompleteOpen(state);
+    }
+
+    private long _shellAttachedTick;
+    private int _scanSkip;
+
+    private static bool LooksOpen(nint hwnd, out PixelRect rect)
+    {
+        rect = default;
+        if (!Win32Util.IsTopLevel(hwnd) || !Win32Util.IsVisible(hwnd) || Win32Util.IsCloaked(hwnd)) return false;
+        rect = Win32Util.WindowRect(hwnd);
+        return rect.Width >= 200 && rect.Height >= 60;
+    }
+
+    /// <summary>
+    /// Look through the shell host's windows for a few seconds. Only while it is
+    /// new to us (just started, or no calendar seen yet this session), so other
+    /// shell surfaces (toasts, quick settings) cost nothing later on.
+    /// </summary>
+    private void StartScan(nint hwnd, string reason, string why)
+    {
+        bool coldShell = !_firstOpenNoticed || Environment.TickCount64 - _shellAttachedTick < 15_000;
+        if (!coldShell || _shellPid == 0) return;
+        bool already = _scanUntil != 0;
+        _scanUntil = Environment.TickCount64 + ScanMs;
+        if (already) return;
+        _scanSkip = 0;
+        Log?.Invoke($"shell window {hwnd:X} ({reason}): {why}; looking through the shell's windows for {ScanMs} ms");
+        StartTimer();
+    }
+
+    private void StopScan()
+    {
+        if (_scanUntil == 0) return;
+        _scanUntil = 0;
+        if (_flyout == 0) StopTimer();
+    }
+
+    private void Scan()
+    {
+        if (_scanUntil == 0) { StopTimer(); return; }
+        if (Environment.TickCount64 > _scanUntil)
+        {
+            Log?.Invoke("shell scan: no calendar appeared");
+            StopScan();
+            return;
+        }
+        if (++_scanSkip % 3 != 0) return; // every ~100 ms is plenty here
+        HWND w = default;
+        for (int i = 0; i < 64; i++)
+        {
+            fixed (char* cls = "Windows.UI.Core.CoreWindow")
+                w = PInvoke.FindWindowEx(default, w, cls, null);
+            if (w.IsNull) break;
+            nint h = (nint)w.Value;
+            if (Win32Util.ProcessIdOf(h) != _shellPid || !LooksOpen(h, out _)) continue;
+            var state = ReadState(h, fresh: true);
+            if (state is null) continue;
+            StopScan();
+            // It came on screen within the last ~100 ms: its slide-in starts about now.
+            BeginOpen(h, Environment.TickCount64);
+            Log?.Invoke($"flyout window {h:X} (found by scanning the shell host): {state}");
+            TryCompleteOpen(state);
+            return;
+        }
     }
 
     private void BeginOpen(nint hwnd, long openTick)
@@ -328,6 +449,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         Remember(state);
         Volatile.Write(ref _state, state);
         Log?.Invoke($"opened: {state}");
+        if (!_firstOpenNoticed)
+        {
+            _firstOpenNoticed = true;
+            Notice?.Invoke($"calendar found: {state}");
+        }
         Opened?.Invoke(state);
     }
 

@@ -1,30 +1,16 @@
-Install for all users (Program Files), and updates that work there too.
+Fixes the panel not appearing beside the calendar after the PC starts.
 
-## New
+## Fixed
 
-- **Choose how to install.** The installer now asks:
-  - **Install for me only** (as before): no admin rights, into
-    `%LOCALAPPDATA%\Programs\World Time Flyout`, updates need no prompt.
-  - **Install for all users**: into `Program Files`. Windows asks for admin rights once,
-    and again when an update installs.
-
-  No need to "Run as administrator" any more; the installer asks Windows itself when it
-  needs to.
-- **Safer updates.** The app now stays open until the installer is ready to replace it.
-  If you say no to the Windows prompt, or the update can't finish, the panel says so and
-  everything keeps working on the current version.
-- After any update the app starts again as you, never with admin rights.
-
-## If you installed 0.2.0 into Program Files with "Run as administrator"
-
-That copy is registered as "just me" but sits in a folder only admins can write, so it
-can't update itself (the panel says so). Move it once:
-
-1. Settings → Apps → Installed apps → World Time Flyout → Uninstall. Answer **No** when
-   it asks about deleting your cities and settings.
-2. Run `WorldTimeFlyout-Setup-0.2.1-win-x64.exe` normally and choose **Install for all
-   users**.
-
-Your cities and settings carry over.
+- **Panel missing after a restart.** When World Time Flyout started with Windows, the
+  part of Windows that shows the calendar often wasn't running yet. It starts on the
+  first click on the clock, and while it starts its window comes on screen without the
+  signals the app was waiting for, so the panel stayed hidden until the panel had been
+  opened once from the tray icon. The app now finds the calendar while that part of
+  Windows is starting, and again whenever Windows restarts it.
+- Startup no longer waits for Windows' accessibility service, and the app doesn't hold
+  up its own start for it.
+- The log (`%LOCALAPPDATA%\WorldTimeFlyout\log.txt`, tray menu → Open log folder) now
+  always notes when the calendar is found, so a problem like this is easy to see.
 
 `metrics.md` below has the size, memory and idle CPU measured on the build machine.

@@ -15,7 +15,7 @@ public static unsafe class Win32Util
 {
     internal static PixelRect FromRect(RECT r) => new(r.left, r.top, r.right, r.bottom);
 
-    private static readonly Dictionary<uint, string> ProcessNames = new();
+    private static readonly Dictionary<uint, (string Name, long Tick)> ProcessNames = new();
     private static readonly Lock ProcessNamesLock = new();
 
     public static uint ProcessIdOf(nint hwnd)
@@ -25,12 +25,16 @@ public static unsafe class Win32Util
         return pid;
     }
 
-    /// <summary>Lower-case image file name ("shellexperiencehost.exe"); cached per pid.</summary>
+    /// <summary>
+    /// Lower-case image file name ("shellexperiencehost.exe"). Cached per pid for a
+    /// short while only: pids are reused, a lot of them around sign-in.
+    /// </summary>
     public static string ProcessName(uint pid)
     {
+        long now = Environment.TickCount64;
         lock (ProcessNamesLock)
         {
-            if (ProcessNames.TryGetValue(pid, out var cached)) return cached;
+            if (ProcessNames.TryGetValue(pid, out var cached) && now - cached.Tick < 30_000) return cached.Name;
         }
         string name = "";
         var h = PInvoke.OpenProcess(PROCESS_ACCESS_RIGHTS.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
@@ -45,10 +49,11 @@ public static unsafe class Win32Util
             }
             PInvoke.CloseHandle(h);
         }
+        if (name.Length == 0) return name; // couldn't read it now (starting/exiting): ask again next time
         lock (ProcessNamesLock)
         {
-            if (ProcessNames.Count > 512) ProcessNames.Clear(); // pids get reused; keep it small
-            ProcessNames[pid] = name;
+            if (ProcessNames.Count > 256) ProcessNames.Clear();
+            ProcessNames[pid] = (name, now);
         }
         return name;
     }

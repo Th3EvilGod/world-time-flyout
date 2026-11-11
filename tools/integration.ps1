@@ -129,17 +129,32 @@ function Motion($label, $track) {
   $results.Add($line); $line
 }
 $motionLog = New-Object System.Collections.Generic.List[string]
-function CheckAttached($label) {
-  Start-Sleep -Milliseconds 700
+function AttachedNow {
   $card = Card; $panel = Panel
-  if (-not $card -or $panel -eq [IntPtr]::Zero) { Check "$label attached" $false "card=$card panel=$panel"; return }
+  if (-not $card -or $panel -eq [IntPtr]::Zero) { return @($false, "card=$card panel=$panel") }
   $f = [W]::Frame($panel)
   $gap = [int]$card.X - $f.R
   $okGap = [Math]::Abs($gap - 12) -le 1
   $okBottom = [Math]::Abs(([int]($card.Y + $card.Height)) - $f.B) -le 1
   $okWidth = [Math]::Abs(([int]$card.Width) - ($f.R - $f.L)) -le 1
   $okHeight = ($f.B - $f.T) -ge ([int]$card.Height - 1)
-  Check "$label attached" ($okGap -and $okBottom -and $okWidth -and $okHeight) "card=$card panel=$f gap=$gap"
+  return @(($okGap -and $okBottom -and $okWidth -and $okHeight), "card=$card panel=$f gap=$gap")
+}
+# $within: seconds to wait for it (a shell host that is starting cold takes a moment)
+function CheckAttached($label, $within = 0) {
+  Start-Sleep -Milliseconds 700
+  $r = AttachedNow
+  for ($i = 0; $i -lt $within * 4 -and -not $r[0]; $i++) { Start-Sleep -Milliseconds 250; $r = AttachedNow }
+  Check "$label attached" $r[0] $r[1]
+}
+function WaitCalendar($open, $seconds) {
+  for ($i = 0; $i -lt $seconds * 5 -and ((CalendarOpen) -ne $open); $i++) { Start-Sleep -Milliseconds 200 }
+}
+function KillShellHost($why) {
+  $before = @(Get-Process ShellExperienceHost -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  Get-Process ShellExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Seconds 2
+  "shell host ended ($why): was pid(s) $($before -join ',')"
 }
 
 # Runners usually have "Animation effects" off; turn them on so the motion is exercised.
@@ -162,17 +177,20 @@ for ($i = 0; $i -lt 30 -and -not (CalendarOpen); $i++) { Start-Sleep -Millisecon
 Esc; Start-Sleep -Milliseconds 1500
 if (CalendarOpen) { WinN; Start-Sleep -Milliseconds 1500 }
 
+# Like right after signing in: the shell host is not running when the app starts,
+# and it starts (cold) on the first Win+N / clock click.
+KillShellHost 'before the app starts'
 $p = Start-Process $exe -ArgumentList '--background', '--diag', '--no-update-check', '--settings', $settings -PassThru
 Start-Sleep -Seconds 8
 "winver: " + (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion + " " + [Environment]::OSVersion.Version
 
-# 1. Win+N opens the calendar; the panel attaches
+# 1. Win+N opens the calendar (shell host starting cold); the panel attaches
 WinN
 $track = [W]::Track([uint32]$p.Id, 900)
 Motion 'open (first)' $track
-Start-Sleep -Milliseconds 600
+WaitCalendar $true 8
 Check 'Win+N opens calendar' (CalendarOpen) ''
-CheckAttached 'after Win+N'
+CheckAttached 'after Win+N (shell host started after the app)' 6
 CheckLayout 'after Win+N'
 Shot '1-open'
 
@@ -301,6 +319,17 @@ Start-Sleep -Milliseconds 500
 Check 'Esc closes calendar' (-not (CalendarOpen)) ''
 Check 'panel hides with the calendar' ((Panel) -eq [IntPtr]::Zero) ''
 Shot '5-closed'
+
+# 4b. Windows restarts the shell host while the app runs: the next open still attaches
+KillShellHost 'while the app runs'
+WinN
+WaitCalendar $true 8
+Check 'calendar opens after the shell host restarted' (CalendarOpen) ''
+CheckAttached 'after the shell host restarted' 6
+Shot '5b-shell-restarted'
+Esc
+WaitCalendar $false 3
+Start-Sleep -Milliseconds 800
 
 # 5. clicking the taskbar clock opens both; clicking again closes both
 $root = $AE::RootElement
