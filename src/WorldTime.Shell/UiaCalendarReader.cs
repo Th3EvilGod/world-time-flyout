@@ -80,9 +80,11 @@ internal sealed unsafe class UiaCalendarReader : IDisposable
         IUIAutomationElement* root = null;
         try
         {
+            // Only the desktop element itself: searching its children would wait on
+            // every top-level window, including ones still starting up at sign-in.
             root = _uia->GetRootElement();
-            var el = root->FindFirstBuildCache(TreeScope.TreeScope_Children, _keyCondition, _cache);
-            if (el is not null) el->Release();
+            var updated = root->BuildUpdatedCache(_cache);
+            if (updated is not null) updated->Release();
         }
         catch (Exception e) when (e is COMException or ArgumentException or UnauthorizedAccessException
                                        or InvalidOperationException or TimeoutException)
