@@ -175,20 +175,6 @@ Start-Sleep -Milliseconds 1200
 WinN
 for ($i = 0; $i -lt 30 -and -not (CalendarOpen); $i++) { Start-Sleep -Milliseconds 200 }
 "warm-up: calendar open = " + (CalendarOpen)
-# Runners start with "Do not disturb" on, which keeps notifications from showing
-# (the notification test below needs them): switch it off in the notification center.
-if (CalendarOpen) {
-  try {
-    foreach ($e in $AE::FromHandle((NcWindow)).FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
-      if ($e.Current.Name -notlike '*disturb*') { continue }
-      $tp = $null
-      $hasToggle = $e.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$tp)
-      $state = if ($hasToggle) { $tp.Current.ToggleState } else { '-' }
-      "do-not-disturb element: '$($e.Current.Name)' $($e.Current.ControlType.ProgrammaticName) toggle=$state"
-      if ($hasToggle -and "$state" -eq 'On') { $tp.Toggle(); Start-Sleep -Milliseconds 500; "do not disturb: switched off ($($tp.Current.ToggleState))" }
-    }
-  } catch { "do not disturb: $($_.Exception.Message)" }
-}
 Esc; Start-Sleep -Milliseconds 1500
 if (CalendarOpen) { WinN; Start-Sleep -Milliseconds 1500 }
 
@@ -451,8 +437,7 @@ function MainWindowOf($name) {
   return [IntPtr]::Zero
 }
 function Maximize($hwnd) { if ($hwnd -ne [IntPtr]::Zero) { [W]::ShowWindow($hwnd, 3) | Out-Null; Start-Sleep -Milliseconds 800 } }
-# A notification starts the shell host too (R's log: when Windows started it for
-# something other than the calendar, the next opens did not attach).
+# A notification for the shell host to show (on PCs it can start the shell host).
 function Toast($text) {
   try {
     [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
@@ -484,18 +469,19 @@ if ($edgeExe) {
   Start-Sleep -Seconds 3
   OpenOverApp 'first open after the shell host ended (browser in front)' 'clock' $edgeWnd 4
   OpenOverApp 'second open after the shell host ended (browser in front)' 'clock' $edgeWnd
-  # The shell host is started by a notification, not by the calendar, while the
-  # browser has the foreground; later the calendar is opened.
+  # The shell host ends again after a few opens (which left a look-through pending
+  # in 0.2.2) and a notification arrives; later the calendar is opened. (Runners have
+  # "Do not disturb" on, so the notification goes straight to the list.)
   FocusApp $edgeWnd
-  KillShellHost 'before a notification starts it'
-  Toast 'started by a notification'
+  KillShellHost 'before a notification arrives'
+  Toast 'sent while the shell host was not running'
   Start-Sleep -Seconds 3
   "shell host after the notification: $(@(Get-Process ShellExperienceHost -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) -join ',')"
   Shot '8-notification'
   Start-Sleep -Seconds 12
-  OpenOverApp 'first open after a notification started the shell host' 'clock' $edgeWnd 4
-  OpenOverApp 'second open after a notification started the shell host' 'clock' $edgeWnd 4
-  OpenOverApp 'third open after a notification started the shell host' 'winn' $edgeWnd 4
+  OpenOverApp 'first open after the shell host ended again (notification sent)' 'clock' $edgeWnd 4
+  OpenOverApp 'second open after the shell host ended again (notification sent)' 'clock' $edgeWnd 4
+  OpenOverApp 'third open after the shell host ended again (notification sent)' 'winn' $edgeWnd 4
 } else { "Edge not found; skipped the browser tests" }
 
 # The Claude desktop app itself, when the runner can install it.
