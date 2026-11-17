@@ -126,6 +126,13 @@ public sealed partial class PanelWindow : Window, IPanelHost
     private bool _moving;
     private int _frames;
     private FrameworkElement? _outgoing;
+    // Frames come from CompositionTarget.Rendering. If they stop coming (the window
+    // is off screen at the start of its slide, the system is busy), a timer takes
+    // over so a motion always finishes and the panel never stays out of sight.
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _motionBackup;
+    private long _lastStep;           // Stopwatch timestamp
+    private int _backupSteps;
+    private int _backupNotices;
 
     public PixelRect Frame => _rect;
     public bool IsExiting => _moving && _motion.FadeOut;
@@ -246,7 +253,27 @@ public sealed partial class PanelWindow : Window, IPanelHost
             _moving = true;
             CompositionTarget.Rendering += OnMotionFrame;
         }
+        _backupSteps = 0;
+        MotionBackup().Start();
         Step();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer MotionBackup()
+    {
+        if (_motionBackup is null)
+        {
+            _motionBackup = DispatcherQueue.CreateTimer();
+            _motionBackup.Interval = TimeSpan.FromMilliseconds(50);
+            _motionBackup.IsRepeating = true;
+            _motionBackup.Tick += (_, _) =>
+            {
+                if (!_moving) { _motionBackup.Stop(); return; }
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(_lastStep).TotalMilliseconds < 80) return;
+                _backupSteps++;
+                Step();
+            };
+        }
+        return _motionBackup;
     }
 
     private void OnMotionFrame(object? sender, object e) => Step();
@@ -254,6 +281,7 @@ public sealed partial class PanelWindow : Window, IPanelHost
     private void Step()
     {
         if (!_moving) return;
+        _lastStep = System.Diagnostics.Stopwatch.GetTimestamp();
         double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_motionStart).TotalMilliseconds;
         double t = Math.Clamp(elapsed / _motion.Milliseconds, 0, 1);
         double p = _motion.Ease(t);
@@ -267,7 +295,11 @@ public sealed partial class PanelWindow : Window, IPanelHost
         if (t < 1) return;
         _moving = false;
         CompositionTarget.Rendering -= OnMotionFrame;
-        DiagLog.Detail($"motion {_motion.Name}: {_frames} frames in {elapsed:0} ms");
+        _motionBackup?.Stop();
+        DiagLog.Detail($"motion {_motion.Name}: {_frames} frames in {elapsed:0} ms" +
+                       (_backupSteps > 0 ? $", {_backupSteps} of them by the backup timer" : ""));
+        if (_backupSteps > 1 && _backupNotices++ < 5)
+            DiagLog.Write($"motion {_motion.Name} needed the backup timer: no frames for {_backupSteps} of {_frames} steps");
         var done = _motionDone;
         _motionDone = null;
         done?.Invoke();
@@ -281,6 +313,7 @@ public sealed partial class PanelWindow : Window, IPanelHost
             _moving = false;
             CompositionTarget.Rendering -= OnMotionFrame;
         }
+        _motionBackup?.Stop();
         _motionDone = null;
         EndTransition();
         _root.Opacity = 1;

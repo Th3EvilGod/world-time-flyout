@@ -50,6 +50,7 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     private bool _announced;          // Opening was raised for the current open
     private bool _closingRaised;
     private nint _lastCalendarHwnd;   // the shell keeps the same window across opens
+    private nint _noticedCalendarHwnd;
     private CalendarState? _lastSettled;
     // Layout the calendar had when it last opened. Windows reopens it the same
     // way (on 26H2 it reopened expanded even after being collapsed), so this
@@ -95,9 +96,13 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
 
     // While the shell host is starting cold its windows are shown, sized and
     // uncloaked without events we can rely on: for a few seconds after any sign
-    // of it, look through its windows for the calendar instead.
+    // of it, look through its windows for the calendar instead. The same happens,
+    // briefly, when a running shell host brings up a calendar window it has just
+    // made (it can replace that window at any time).
     private long _scanUntil;
-    private const int ScanMs = 4000;
+    private bool _scanCold;
+    private const int ColdScanMs = 4000;
+    private const int WarmScanMs = 1500;
     private bool _firstOpenNoticed;
 
     public bool UiaAvailable { get; private set; }
@@ -179,8 +184,9 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         {
             if (msg.hwnd == default && msg.message == PInvoke.WM_TIMER)
             {
-                if (_flyout == 0) Scan();
-                else Poll("timer");
+                if (_flyout != 0) Poll("timer");
+                // also while a shell window is still opening: it may not be the calendar
+                if (_flyout == 0 || _opening) Scan();
                 continue;
             }
             if (msg.hwnd == default && msg.message == PInvoke.WM_APP + 7) { Poll("refresh"); continue; }
@@ -272,7 +278,17 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
                     AttachToShell(pid, "foreground");
                     Consider(hwnd, "foreground");
                 }
-                else if (_flyout != 0)
+                else if (_flyout == 0)
+                {
+                    // Another app (or the taskbar) has the foreground: a shell surface
+                    // the user opened has closed again, so stop looking through it.
+                    if (_scanUntil != 0 && !_scanCold)
+                    {
+                        Log?.Invoke("shell scan stopped: the foreground left the shell");
+                        StopScan();
+                    }
+                }
+                else
                 {
                     // Our own windows are excluded from these events, so this is
                     // another app (or the taskbar): the calendar is dismissing.
@@ -344,7 +360,6 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             StartScan(hwnd, reason, "no calendar card yet");
             return;
         }
-        StopScan();
         if (!known) BeginOpen(hwnd, openTick);
         Log?.Invoke($"flyout window {hwnd:X} ({reason}, read {readMs:0} ms, event {Environment.TickCount64 - openTick} ms ago): " +
                     $"class={Win32Util.ClassName(hwnd)} {state}");
@@ -363,35 +378,48 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
     }
 
     /// <summary>
-    /// Look through the shell host's windows for a few seconds. Only while it is
-    /// new to us (just started, or no calendar seen yet this session), so other
-    /// shell surfaces (toasts, quick settings) cost nothing later on.
+    /// Look through the shell host's windows for a moment: for a few seconds while
+    /// the shell host is new to us (just started, or no calendar seen yet this
+    /// session), and briefly whenever the user brings a shell window to the front
+    /// that isn't a calendar we know (the shell may have made a new one). Shell
+    /// surfaces that don't take the foreground (toasts) cost nothing later on.
     /// </summary>
     private void StartScan(nint hwnd, string reason, string why)
     {
-        bool coldShell = !_firstOpenNoticed || Environment.TickCount64 - _shellAttachedTick < 15_000;
-        if (!coldShell || _shellPid == 0) return;
-        bool already = _scanUntil != 0;
-        _scanUntil = Environment.TickCount64 + ScanMs;
+        if (_shellPid == 0 || (_flyout != 0 && !_opening)) return; // the calendar is open and found
+        long now = Environment.TickCount64;
+        bool cold = !_firstOpenNoticed || now - _shellAttachedTick < 15_000;
+        bool opened = Win32Util.ForegroundWindow() == hwnd;
+        if (!cold && !opened) return;
+        int ms = cold ? ColdScanMs : WarmScanMs;
+        bool already = _scanUntil > now;
+        _scanUntil = Math.Max(_scanUntil, now + ms);
+        _scanCold |= cold;
+        StartTimer();
         if (already) return;
         _scanSkip = 0;
-        Log?.Invoke($"shell window {hwnd:X} ({reason}): {why}; looking through the shell's windows for {ScanMs} ms");
-        StartTimer();
+        _scanCold = cold;
+        _scanStarted = now;
+        Log?.Invoke($"shell window {hwnd:X} ({reason}): {why}; looking through the shell's windows for {ms} ms ({(cold ? "shell host is new" : "opened by the user")})");
     }
+
+    private long _scanStarted;
 
     private void StopScan()
     {
         if (_scanUntil == 0) return;
         _scanUntil = 0;
+        _scanCold = false;
         if (_flyout == 0) StopTimer();
     }
 
     private void Scan()
     {
-        if (_scanUntil == 0) { StopTimer(); return; }
+        if (_scanUntil == 0) { if (_flyout == 0) StopTimer(); return; }
         if (Environment.TickCount64 > _scanUntil)
         {
-            Log?.Invoke("shell scan: no calendar appeared");
+            if (_scanCold) Notice?.Invoke("shell scan: no calendar appeared");
+            else Log?.Invoke("shell scan: no calendar appeared");
             StopScan();
             return;
         }
@@ -403,13 +431,14 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
                 w = PInvoke.FindWindowEx(default, w, cls, null);
             if (w.IsNull) break;
             nint h = (nint)w.Value;
-            if (Win32Util.ProcessIdOf(h) != _shellPid || !LooksOpen(h, out _)) continue;
+            if (h == _flyout || Win32Util.ProcessIdOf(h) != _shellPid || !LooksOpen(h, out _)) continue;
             var state = ReadState(h, fresh: true);
             if (state is null) continue;
+            long took = Environment.TickCount64 - _scanStarted;
             StopScan();
             // It came on screen within the last ~100 ms: its slide-in starts about now.
             BeginOpen(h, Environment.TickCount64);
-            Log?.Invoke($"flyout window {h:X} (found by scanning the shell host): {state}");
+            Log?.Invoke($"flyout window {h:X} (found by scanning the shell host after {took} ms): {state}");
             TryCompleteOpen(state);
             return;
         }
@@ -423,9 +452,19 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         _misses = 0;
         _closingRaised = false;
         _opening = true;
+        _openingSince = Environment.TickCount64;
         _announced = false;
         StartTimer();
     }
+
+    private long _openingSince;
+    /// <summary>
+    /// A shell window that shows a calendar card too small to be open (a shell host
+    /// that is starting can show its calendar window before using it) is let go after
+    /// this long, so it can't keep the tracker from noticing the real open.
+    /// </summary>
+    private const int OpeningGiveUpMs = 3000;
+    private int _gaveUpNotices;
 
     /// <summary>
     /// Whether the calendar reopens the way it was last left (expanded or
@@ -441,6 +480,8 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
         if (_lastOpened is { } lo && _lastSettled is { } ls && lo.Expanded != ls.Expanded)
             _reopenLikeSettled = state.Expanded == ls.Expanded;
         _opening = false;
+        _scanUntil = 0; // found what any scan was looking for
+        _scanCold = false;
         _lastRawCard = state.Card;
         _lastSlide = state.SlideOffset;
         _lastHeightChange = 0;
@@ -454,6 +495,11 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             _firstOpenNoticed = true;
             Notice?.Invoke($"calendar found: {state}");
         }
+        else if (state.Hwnd != _noticedCalendarHwnd)
+        {
+            Notice?.Invoke($"calendar found in a new window: {state}");
+        }
+        _noticedCalendarHwnd = state.Hwnd;
         Opened?.Invoke(state);
     }
 
@@ -474,7 +520,16 @@ public sealed unsafe class CalendarFlyoutTracker : IDisposable
             return;
         }
         _misses = 0;
-        if (_opening) { TryCompleteOpen(state); return; }
+        if (_opening)
+        {
+            TryCompleteOpen(state);
+            if (_opening && Environment.TickCount64 - _openingSince > OpeningGiveUpMs)
+            {
+                if (_gaveUpNotices++ < 5) Notice?.Invoke($"shell window {hwnd:X} never finished opening, letting it go: {state}");
+                CloseFlyout("did not finish opening");
+            }
+            return;
+        }
 
         // Esc or a click elsewhere: the card starts sliding back out to the right
         // before the foreground moves (and ~250 ms before the window is cloaked).
