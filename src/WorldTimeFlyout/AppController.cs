@@ -181,6 +181,7 @@ public sealed class AppController : IDisposable
         _calendar = s;
         var (rect, layout) = PlacementBeside(s);
         bool visible = _panel.IsShown && !_panel.IsExiting && _state != PanelState.Hidden;
+        DiagLog.Detail($"attach ({ifShown.Name}): {(visible ? "move" : "slide in")}, state={_state}, shown={_panel.IsShown}, exiting={_panel.IsExiting}, to {rect}");
         _state = PanelState.Attached;
         if (visible) _panel.MoveTo(rect, layout, ifShown);
         else _panel.EnterFromRight(rect, layout, CalendarSlide(s), _tracker.OpenStartTick);
@@ -206,6 +207,7 @@ public sealed class AppController : IDisposable
     private void OnCalendarClosing(string reason)
     {
         if (_state != PanelState.Attached || _panel.IsActive || _panel.IsSearching) return;
+        DiagLog.Detail($"calendar closing ({reason}): panel slides out");
         HidePanel(animate: true);
         _reattachCheck.Stop();
         _reattachCheck.Start();

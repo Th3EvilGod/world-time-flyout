@@ -393,6 +393,98 @@ if (CalendarOpen) {
   Esc; Start-Sleep -Milliseconds 800
 }
 SetDark $false
+Start-Sleep -Seconds 2
+
+# 7. Working in another app: a maximized window has the foreground when the
+#    calendar opens (the Claude desktop app is an Electron app; Edge is the same
+#    kind of window). Windows also ends the shell host now and then while you work
+#    elsewhere; the first open after that must attach too.
+function ForegroundName {
+  $fp = [uint32]0
+  [W]::GetWindowThreadProcessId([W]::GetForegroundWindow(), [ref]$fp) | Out-Null
+  try { (Get-Process -Id $fp -ErrorAction Stop).ProcessName } catch { "pid $fp" }
+}
+function FocusApp($hwnd) {
+  $b = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  # an empty spot on the left, away from buttons (Claude's sign-in page has them in the middle)
+  if ($hwnd -and $hwnd -ne [IntPtr]::Zero) { $f = [W]::Frame($hwnd); [W]::Click([int]($f.L + ($f.R - $f.L) * 0.08), [int]($f.T + ($f.B - $f.T) * 0.55)) }
+  else { [W]::Click([int]($b.Width * 0.08), [int]($b.Height * 0.55)) }
+  Start-Sleep -Milliseconds 600
+}
+function OpenCalendar($how) {
+  if ($how -eq 'clock' -and $clock) { $r = $clock.Current.BoundingRectangle; [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
+  else { WinN }
+}
+function OpenOverApp($label, $how, $hwnd, $within = 3) {
+  FocusApp $hwnd
+  "foreground before ${label}: $(ForegroundName)"
+  OpenCalendar $how
+  $track = [W]::Track([uint32]$p.Id, 900)
+  Motion "open ($label)" $track
+  WaitCalendar $true 6
+  Check "$label opens calendar" (CalendarOpen) ''
+  CheckAttached $label $within
+  Shot ('8-' + (($label -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLower()))
+  Esc; WaitCalendar $false 3; Start-Sleep -Milliseconds 900
+  Check "$label closes with the calendar" ((Panel) -eq [IntPtr]::Zero) ''
+}
+function MainWindowOf($name) {
+  foreach ($proc in @(Get-Process $name -ErrorAction SilentlyContinue)) {
+    $h = [W]::VisibleWindowOf([uint32]$proc.Id, 400, 300)
+    if ($h -ne [IntPtr]::Zero) { return $h }
+  }
+  return [IntPtr]::Zero
+}
+function Maximize { [W]::Key(0x5B, $false); [W]::Key(0x26, $false); [W]::Key(0x26, $true); [W]::Key(0x5B, $true); Start-Sleep -Milliseconds 800 }
+
+$edgeExe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") |
+  Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($edgeExe) {
+  Start-Process $edgeExe -ArgumentList '--new-window', '--start-maximized', '--no-first-run', '--no-default-browser-check',
+    '--disable-features=msEdgeWelcomePage', "--user-data-dir=$(Join-Path $env:TEMP 'wtf-edge')", 'about:blank' | Out-Null
+  Start-Sleep -Seconds 6
+  [W]::CloseDialogs() | Out-Null
+  $edgeWnd = MainWindowOf 'msedge'
+  FocusApp $edgeWnd; Maximize
+  "edge window: $(if ($edgeWnd -ne [IntPtr]::Zero) { [W]::Frame($edgeWnd) } else { 'not found' }), foreground: $(ForegroundName)"
+  OpenOverApp 'maximized browser in front, clock' 'clock' $edgeWnd
+  OpenOverApp 'maximized browser in front, Win+N' 'winn' $edgeWnd
+  OpenOverApp 'maximized browser in front, clock again' 'clock' $edgeWnd
+  # Windows ends the shell host while the browser has the foreground.
+  FocusApp $edgeWnd
+  KillShellHost 'while a browser has the foreground'
+  Start-Sleep -Seconds 3
+  OpenOverApp 'first open after the shell host ended (browser in front)' 'clock' $edgeWnd 4
+  OpenOverApp 'second open after the shell host ended (browser in front)' 'clock' $edgeWnd
+} else { "Edge not found; skipped the browser tests" }
+
+# The Claude desktop app itself, when the runner can install it.
+$claudeWnd = [IntPtr]::Zero
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+  $wg = Start-Process winget -ArgumentList 'install', '--id', 'Anthropic.Claude', '-e', '--silent', '--accept-source-agreements',
+    '--accept-package-agreements', '--disable-interactivity' -PassThru -WindowStyle Hidden
+  if ($wg.WaitForExit(240000)) { "winget install Anthropic.Claude: exit $($wg.ExitCode)" } else { $wg.Kill(); "winget install Anthropic.Claude: timed out" }
+  $app = Get-StartApps | Where-Object { $_.Name -eq 'Claude' } | Select-Object -First 1
+  if ($app) {
+    "Claude desktop: $($app.AppID)"
+    Start-Process explorer.exe "shell:AppsFolder\$($app.AppID)"
+    for ($i = 0; $i -lt 40 -and $claudeWnd -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500; $claudeWnd = MainWindowOf 'claude' }
+    Start-Sleep -Seconds 4
+    [W]::CloseDialogs() | Out-Null
+  } else { "Claude desktop not in the Start menu after winget" }
+} else { "winget not available; skipped the Claude desktop test" }
+if ($claudeWnd -ne [IntPtr]::Zero) {
+  FocusApp $claudeWnd; Maximize
+  "claude window: $([W]::Frame($claudeWnd)), foreground: $(ForegroundName)"
+  OpenOverApp 'Claude desktop in front, clock' 'clock' $claudeWnd
+  OpenOverApp 'Claude desktop in front, Win+N' 'winn' $claudeWnd
+  FocusApp $claudeWnd
+  KillShellHost 'while Claude desktop has the foreground'
+  Start-Sleep -Seconds 3
+  OpenOverApp 'first open after the shell host ended (Claude desktop in front)' 'clock' $claudeWnd 4
+  OpenOverApp 'second open after the shell host ended (Claude desktop in front)' 'clock' $claudeWnd
+}
+Get-Process msedge, claude -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Check 'app still running' (-not $p.HasExited) ''
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
