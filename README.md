@@ -48,7 +48,7 @@ updates itself.
 | Copy with the date, copy all, reorder, set the main city, remove | Right-click a city |
 | See more cities in the compact view | ‹ › on the sides, swipe sideways, or tilt the wheel |
 | Add a city | **+** at the top of the full view |
-| Change the time step, clock format, startup, tray icon | **⋯** at the top of the full view |
+| Change the time step, clock format, startup, tray icon, updates | **⋯** at the top of the full view |
 
 Steps land on clean times: at 10:27 with 30 minute steps, back is 10:00 (−30m) and
 forward is 11:00 (+30m). The "main city" (accent bar) is the one the timeline and the
@@ -79,6 +79,8 @@ published with the release, installs it silently and restarts (for an all-users 
 after you approve the Windows prompt). Check by hand with
 **⋯** → Check for updates; turn the daily check off with **⋯** → Check for updates daily.
 
+![The ⋯ menu](docs/images/menu.png)
+
 **Uninstall:** Settings → Apps → Installed apps → World Time Flyout → Uninstall. It asks
 whether to delete your cities and settings too.
 
@@ -89,7 +91,7 @@ switches to it.
 ## Requirements
 
 - Windows 11, x64. Tested on 24H2 and 26H2, with the taskbar at the bottom of the screen.
-- The .NET runtime and the Windows App SDK are included in the zip.
+- The .NET runtime and the Windows App SDK are included in the installer and the zip.
 
 ## Privacy
 
@@ -99,6 +101,14 @@ but the app's version, and downloads an installer only when you click Install. T
 daily check off in the **⋯** menu. Your cities and preferences are saved in
 `%LOCALAPPDATA%\WorldTimeFlyout\settings.json`. A small log is kept next to it (more
 detail when started with `--diag`).
+
+## If the panel doesn't show up
+
+Right-click the tray icon → **Open log folder** and attach `log.txt` to an
+[issue](../../issues). It notes when the app starts, when it finds the calendar and
+anything unusual. For more detail, create an empty file named `diag.on` in that folder,
+then restart the app (tray icon → Exit, then start it again) and open the calendar a few
+times. Delete `diag.on` afterwards. The tray icon always opens the panel on its own.
 
 ## How it works
 
@@ -112,8 +122,9 @@ clicked, so the calendar stays open while you use it. Details:
 
 Builds run on GitHub Actions ([ci.yml](.github/workflows/ci.yml)) on Windows: unit tests,
 a NativeAOT self-contained publish, screenshots rendered by the app, an end-to-end test
-against the real taskbar calendar, measured size/memory/CPU, the installer and the zip
-with their SHA-256.
+against the real taskbar calendar (including with a maximized browser and the Claude
+desktop app in front, and with the calendar's process restarted by Windows), measured
+size/memory/CPU, the installer and the zip with their SHA-256.
 
 To publish a release: Actions → Build → Run workflow on `main`, enter the version (for
 example `0.3.0`). It builds, tests and publishes the release with the installer, the
