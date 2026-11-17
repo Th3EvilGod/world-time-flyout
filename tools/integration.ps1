@@ -36,6 +36,7 @@ public static class W {
   public static int GetAnimations() { int v; SystemParametersInfo(0x1042, 0, out v, 0); return v; }
   public static void SetAnimations(bool on) { SystemParametersInfo(0x1043, 0, new IntPtr(on ? 1 : 0), 3); }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
@@ -393,6 +394,127 @@ if (CalendarOpen) {
   Esc; Start-Sleep -Milliseconds 800
 }
 SetDark $false
+Start-Sleep -Seconds 2
+
+# 7. Working in another app: a maximized window has the foreground when the
+#    calendar opens (the Claude desktop app is an Electron app; Edge is the same
+#    kind of window). Windows also ends the shell host now and then while you work
+#    elsewhere; the first open after that must attach too.
+function ForegroundName {
+  $fp = [uint32]0
+  [W]::GetWindowThreadProcessId([W]::GetForegroundWindow(), [ref]$fp) | Out-Null
+  try { (Get-Process -Id $fp -ErrorAction Stop).ProcessName } catch { "pid $fp" }
+}
+function FocusApp($hwnd) {
+  $b = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  # an empty spot on the left, away from buttons (Claude's sign-in page has them in the middle)
+  if ($hwnd -and $hwnd -ne [IntPtr]::Zero) { $f = [W]::Frame($hwnd); [W]::Click([int]($f.L + ($f.R - $f.L) * 0.08), [int]($f.T + ($f.B - $f.T) * 0.55)) }
+  else { [W]::Click([int]($b.Width * 0.08), [int]($b.Height * 0.55)) }
+  Start-Sleep -Milliseconds 600
+}
+function OpenCalendar($how) {
+  if ($how -eq 'clock' -and $clock) { $r = $clock.Current.BoundingRectangle; [W]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
+  else { WinN }
+}
+function OpenOverApp($label, $how, $hwnd, $within = 3) {
+  FocusApp $hwnd
+  "foreground before ${label}: $(ForegroundName)"
+  OpenCalendar $how
+  $track = [W]::Track([uint32]$p.Id, 900)
+  Motion "open ($label)" $track
+  WaitCalendar $true 6
+  Check "$label opens calendar" (CalendarOpen) ''
+  CheckAttached $label $within
+  Shot ('8-' + (($label -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLower()))
+  Esc; WaitCalendar $false 3; Start-Sleep -Milliseconds 900
+  Check "$label closes with the calendar" ((Panel) -eq [IntPtr]::Zero) ''
+}
+function MainWindowOf($name) {
+  foreach ($proc in @(Get-Process $name -ErrorAction SilentlyContinue)) {
+    $h = [W]::VisibleWindowOf([uint32]$proc.Id, 400, 300)
+    if ($h -ne [IntPtr]::Zero) { return $h }
+  }
+  return [IntPtr]::Zero
+}
+function Maximize($hwnd) { if ($hwnd -ne [IntPtr]::Zero) { [W]::ShowWindow($hwnd, 3) | Out-Null; Start-Sleep -Milliseconds 800 } }
+# A notification for the shell host to show (on PCs it can start the shell host).
+function Toast($text) {
+  try {
+    [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+    [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+    $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+    $xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>World Time test</text><text>$text</text></binding></visual></toast>")
+    $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
+    "toast shown: $text, shell host: $(@(Get-Process ShellExperienceHost -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) -join ',')"
+  } catch { "toast failed: $($_.Exception.Message)" }
+}
+
+$edgeExe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") |
+  Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($edgeExe) {
+  Start-Process $edgeExe -ArgumentList '--new-window', '--start-maximized', '--no-first-run', '--no-default-browser-check',
+    '--disable-features=msEdgeWelcomePage', "--user-data-dir=$(Join-Path $env:TEMP 'wtf-edge')", 'about:blank' | Out-Null
+  Start-Sleep -Seconds 6
+  [W]::CloseDialogs() | Out-Null
+  $edgeWnd = MainWindowOf 'msedge'
+  Maximize $edgeWnd; FocusApp $edgeWnd
+  "edge window: $(if ($edgeWnd -ne [IntPtr]::Zero) { [W]::Frame($edgeWnd) } else { 'not found' }), foreground: $(ForegroundName)"
+  OpenOverApp 'maximized browser in front, clock' 'clock' $edgeWnd
+  OpenOverApp 'maximized browser in front, Win+N' 'winn' $edgeWnd
+  OpenOverApp 'maximized browser in front, clock again' 'clock' $edgeWnd
+  # Windows ends the shell host while the browser has the foreground.
+  FocusApp $edgeWnd
+  KillShellHost 'while a browser has the foreground'
+  Start-Sleep -Seconds 3
+  OpenOverApp 'first open after the shell host ended (browser in front)' 'clock' $edgeWnd 4
+  OpenOverApp 'second open after the shell host ended (browser in front)' 'clock' $edgeWnd
+  # The shell host ends again after a few opens (which left a look-through pending
+  # in 0.2.2) and a notification arrives; later the calendar is opened. (Runners have
+  # "Do not disturb" on, so the notification goes straight to the list.)
+  FocusApp $edgeWnd
+  KillShellHost 'before a notification arrives'
+  Toast 'sent while the shell host was not running'
+  Start-Sleep -Seconds 3
+  "shell host after the notification: $(@(Get-Process ShellExperienceHost -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) -join ',')"
+  Shot '8-notification'
+  Start-Sleep -Seconds 12
+  OpenOverApp 'first open after the shell host ended again (notification sent)' 'clock' $edgeWnd 4
+  OpenOverApp 'second open after the shell host ended again (notification sent)' 'clock' $edgeWnd 4
+  OpenOverApp 'third open after the shell host ended again (notification sent)' 'winn' $edgeWnd 4
+} else { "Edge not found; skipped the browser tests" }
+
+# The Claude desktop app itself, when the runner can install it.
+$claudeWnd = [IntPtr]::Zero
+if (Get-Command winget -ErrorAction SilentlyContinue) {
+  $wg = Start-Process winget -ArgumentList 'install', '--id', 'Anthropic.Claude', '-e', '--silent', '--accept-source-agreements',
+    '--accept-package-agreements', '--disable-interactivity' -PassThru -WindowStyle Hidden
+  if ($wg.WaitForExit(240000)) { "winget install Anthropic.Claude: exit $($wg.ExitCode)" } else { $wg.Kill(); "winget install Anthropic.Claude: timed out" }
+  $apps = @(Get-StartApps | Where-Object { $_.Name -like '*Claude*' })
+  "start apps: $(($apps | ForEach-Object { "$($_.Name)=$($_.AppID)" }) -join '; ')"
+  $pkgs = @(Get-AppxPackage -Name '*Claude*' -ErrorAction SilentlyContinue)
+  "packages: $(($pkgs | ForEach-Object { $_.PackageFullName }) -join '; ')"
+  $exes = @(Get-ChildItem "$env:LOCALAPPDATA\AnthropicClaude", "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles" -Filter 'claude.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue)
+  "claude.exe: $(($exes | ForEach-Object { $_.FullName }) -join '; ')"
+  if ($apps.Count -gt 0) { Start-Process explorer.exe "shell:AppsFolder\$($apps[0].AppID)" }
+  elseif ($exes.Count -gt 0) { Start-Process $exes[0].FullName }
+  for ($i = 0; $i -lt 60 -and $claudeWnd -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500; $claudeWnd = MainWindowOf 'claude' }
+  "claude window: $(if ($claudeWnd -ne [IntPtr]::Zero) { [W]::Frame($claudeWnd) } else { 'not found' })"
+  Start-Sleep -Seconds 4
+  [W]::CloseDialogs() | Out-Null
+} else { "winget not available; skipped the Claude desktop test" }
+if ($claudeWnd -ne [IntPtr]::Zero) {
+  Maximize $claudeWnd; FocusApp $claudeWnd
+  "claude window: $([W]::Frame($claudeWnd)), foreground: $(ForegroundName)"
+  OpenOverApp 'Claude desktop in front, clock' 'clock' $claudeWnd
+  OpenOverApp 'Claude desktop in front, Win+N' 'winn' $claudeWnd
+  FocusApp $claudeWnd
+  KillShellHost 'while Claude desktop has the foreground'
+  Start-Sleep -Seconds 3
+  OpenOverApp 'first open after the shell host ended (Claude desktop in front)' 'clock' $claudeWnd 4
+  OpenOverApp 'second open after the shell host ended (Claude desktop in front)' 'clock' $claudeWnd
+}
+Get-Process msedge, claude -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Check 'app still running' (-not $p.HasExited) ''
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue

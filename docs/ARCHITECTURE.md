@@ -56,13 +56,20 @@ The Windows 11 notification center and calendar live in one shell window owned b
 ### Finding the shell host
 
 ShellExperienceHost is often not running when the app starts at sign-in; it starts on
-the first click on the clock and Windows may restart it later. Its windows are immersive,
-so `EnumWindows` never lists them; the tracker finds it by process name, and otherwise
-from system-wide foreground and cloak events (both rare). While the shell host is new,
-its window comes to the front before it is sized, shown and uncloaked, without further
-events we can rely on, so for 4 s after any sign of it the tracker looks through its
-visible CoreWindows every ~100 ms for the calendar card. Integration ends the shell host
-before the app starts and again mid-session to cover both cases.
+the first click on the clock, or for a notification, and Windows may end and restart it
+later. Its windows are immersive, so `EnumWindows` never lists them; the tracker finds it
+by process name, and otherwise from system-wide foreground and cloak events (both rare).
+While the shell host is new, its window comes to the front before it is sized, shown and
+uncloaked, without further events we can rely on, so for 4 s after any sign of it the
+tracker looks through its visible CoreWindows every ~100 ms for the calendar card. It
+does the same for 1.5 s whenever the user brings a shell window it doesn't know to the
+front, and while a shell window is still opening (it may not be the calendar). A shell
+window whose card never reaches a usable size is let go after 3 s.
+
+Integration covers: the shell host ending before the app starts, mid-session, and while
+a maximized browser (and the Claude desktop app, when the runner can install it) has the
+foreground, including a restart after several opens (0.2.2 left a finished search marked
+as running there, so the first open after the restart found nothing).
 
 ### Motion
 
@@ -81,7 +88,9 @@ step. When the calendar's window is already known, the panel starts moving at th
 with the layout the calendar had last time, instead of waiting for the card to be laid
 out. The exit starts as soon as the calendar loses the foreground (it is cloaked only
 after its own exit animation). During expand/collapse both layouts stay laid out at their
-own final heights, pinned to the bottom edge, and cross-fade.
+own final heights, pinned to the bottom edge, and cross-fade. Frames come from
+`CompositionTarget.Rendering`; a 50 ms backup timer steps the motion if they stop
+coming, so a slide always finishes.
 
 The panel window is `WS_EX_NOACTIVATE` and answers `WM_MOUSEACTIVATE` with `MA_NOACTIVATE`;
 buttons don't take focus on click. So clicking times, paging and dragging the timeline do
