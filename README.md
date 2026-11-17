@@ -154,4 +154,16 @@ it over the air from a local copy of a release, and uninstalls it on every build
   The panel then stays until you click elsewhere or press Esc.
 - Windows 11 only: the calendar flyout it attaches to does not exist on Windows 10.
 
+## License
+
+Copyright (c) 2026 Th3EvilGod. World Time Flyout is free software under the
+[GNU General Public License v3.0](LICENSE): you can use, study, change and share it,
+and anything you share that is based on it must stay open under the same license.
+
+Additional permission under GNU GPL version 3 section 7: if you modify this program, or
+any covered work, by linking or combining it with the Windows App SDK (or a modified
+version of it), containing parts covered by the terms of the Microsoft Software License
+Terms for the Windows App SDK, the licensors of this program grant you additional
+permission to convey the resulting work.
+
 Third-party components and their licenses: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

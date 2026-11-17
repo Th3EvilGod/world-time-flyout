@@ -67,7 +67,7 @@ jobs:
           dotnet publish src/WorldTimeFlyout/WorldTimeFlyout.csproj -c Release -r win-x64 `
             -p:Version=${{ steps.ver.outputs.version }} -p:AssemblyVersion=$v -p:FileVersion=$v `
             -o publish/WorldTimeFlyout
-          Copy-Item README.md, THIRD-PARTY-NOTICES.md publish/WorldTimeFlyout/
+          Copy-Item README.md, THIRD-PARTY-NOTICES.md, LICENSE publish/WorldTimeFlyout/
           Remove-Item publish/WorldTimeFlyout/*.pdb -ErrorAction SilentlyContinue
 
       - name: Screenshots (rendered by the real app)

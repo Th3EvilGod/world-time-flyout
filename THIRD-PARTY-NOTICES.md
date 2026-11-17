@@ -6,7 +6,9 @@ World Time Flyout includes or uses the following:
   package. Licensed under Creative Commons Attribution 4.0. https://www.geonames.org/
 - **Noda Time** and its bundled IANA time zone database. Apache License 2.0.
   https://nodatime.org/ ; tz data is public domain, https://www.iana.org/time-zones
-- **Windows App SDK / WinUI 3**. MIT License. https://github.com/microsoft/WindowsAppSDK
+- **Windows App SDK / WinUI 3** runtime, included with the app. Microsoft Software
+  License Terms for the Windows App SDK (redistributable); its source code on GitHub is
+  MIT licensed. https://github.com/microsoft/WindowsAppSDK
 - **C#/Win32 (CsWin32)** source generator. MIT License. https://github.com/microsoft/CsWin32
 - **.NET runtime** (compiled in via NativeAOT). MIT License. https://github.com/dotnet/runtime
 - **Inno Setup** builds the installer (its setup and uninstall programs are Inno Setup's).
